@@ -19,8 +19,8 @@ android {
         // Android 4.0.
         minSdk = 14
         targetSdk = 34
-        versionCode = 7
-        versionName = "1.6"
+        versionCode = 8
+        versionName = "1.7"
     }
 
     // Signed with the same key as Aerial (see app/build.gradle.kts and docs/HANDOFF.md).
