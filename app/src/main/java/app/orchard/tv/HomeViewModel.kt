@@ -127,6 +127,17 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     /** Home is the resumed activity: the aerial wallpaper only moves while it is. */
     var resumed by mutableStateOf(false)
 
+    /**
+     * Paused only by Home's bounce on Xiaomi (HomeGuardService.backOnPause), and being brought
+     * straight back: the wallpaper's film plays on as if still resumed. Let go, it left the window
+     * black where the film showed through until Aerial was back 150 ms later, and then started over
+     * (MiTV-MFTR0, Android 14).
+     */
+    var homeBounce by mutableStateOf(false)
+
+    /** In front for the wallpaper's film: resumed, or only bouncing off Home (homeBounce). */
+    val filmFront: Boolean get() = resumed || homeBounce
+
     /** Aerial's screensaver is up (see MainActivity's idle timer). */
     var screensaverVisible by mutableStateOf(false)
     val screensaverSkips = ScreensaverSkips()

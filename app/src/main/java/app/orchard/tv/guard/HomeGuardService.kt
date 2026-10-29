@@ -31,6 +31,7 @@ import android.view.accessibility.AccessibilityManager
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import app.orchard.tv.MainActivity
+import app.orchard.tv.dream.AerialDream
 import app.orchard.tv.settings.AerialSettings
 import app.orchard.tv.system.BootOpen
 import app.orchard.tv.system.SystemProbe
@@ -712,7 +713,9 @@ class HomeGuardService : AccessibilityService() {
             handler.removeCallbacks(homeHold)
             if (!event.isCanceled && !homeHeld) {
                 Log.i(TAG, "Home key taken before the system saw it")
-                lastHomeUpAt = event.eventTime
+                // Over Aerial's screensaver, Home closes it. Not counted toward a double press: an IR
+                // remote's press can come twice (TCL MT5879), and the second opened the recent apps.
+                lastHomeUpAt = if (AerialDream.endForHome()) Long.MIN_VALUE / 2 else event.eventTime
                 goHome()
                 closeSystemDialogs()
             }
@@ -1326,17 +1329,22 @@ class HomeGuardService : AccessibilityService() {
             }
         }
 
-        /** Called when Aerial leaves the front: keys are no longer filtered from Android 12 on. */
-        fun onAerialPaused() {
+        /**
+         * Called when Aerial leaves the front: keys are no longer filtered from Android 12 on.
+         * True when the pause is only Home's bounce (backOnPause) and Aerial is on its way back.
+         */
+        fun onAerialPaused(): Boolean {
             aerialResumed = false
-            val s = instance ?: return
+            val s = instance ?: return false
             s.updateKeyFilter()
             // Within the pause Home itself makes, not one the viewer makes after it by opening an app.
             if (s.backOnPause && SystemClock.uptimeMillis() - s.homeInAerialAt < HOME_PAUSE_MS) {
                 s.homeInAerialAt = Long.MIN_VALUE / 2
                 Log.i(TAG, "Aerial paused for Home; bringing it back before the stock launcher shows")
                 s.goHome()
+                return true
             }
+            return false
         }
     }
 }

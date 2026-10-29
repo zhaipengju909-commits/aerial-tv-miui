@@ -90,6 +90,12 @@
 - `uinput`：单按 7 次、连按 5 次（含间隔 120ms 的快速连按），frametimeline 里 PatchWall 的任务层都没被提上来，连按都打开了最近任务；按住主页键是小米的任务中心，守护不干预；按住音量 1.5 秒，音量加 16 次、音量减 12 次连发；从 Aerial 打开云视听极光不会被拉回，在云视听极光里按主页键照旧回到 Aerial。
 - 户主在电视前看：正常速度按主页键不闪，按住音量能连发。疯狂连按主页键会闪一下 PatchWall，换回正式的 1.52 也一样，不是这个改动带来的。
 
+### 按主页键壁纸黑一下（2026-10-29 修，未发版）
+
+- 1.68 起（上一节的 backOnPause），Aerial 里按主页键时 Aerial 会 `onPause` 约 150ms 再被拉回。暂停时 `vm.resumed` 变成 false，航拍壁纸立刻释放播放器，可视频层还开着、下面没画东西，屏幕就黑了；回来后影片从头加载（日志里主页键之后又出现 `wallpaper film starts`）。
+- 修复：`HomeGuardService.onAerialPaused()` 返回「这次暂停只是主页键的回弹、正在拉回」，MainActivity 就设 `vm.homeBounce`，航拍和视频壁纸按 `vm.filmFront`（resumed 或回弹中）继续播放；500ms 内没回来或进了 `onStop` 就照常释放。信号源壁纸不跟这个开关。
+- 实测（standard release，uinput）：单按 4 次之后都没有 `wallpaper film starts`，没有 `onStop`；间隔 120ms 连按两下照旧打开最近任务（`RecentsPanel`）；Aerial 在前台时仍不过滤按键（音量连发不受影响）。回弹期间 PatchWall 没有开解码器。户主还没有在电视前看。
+
 ## 其他
 
 - 背光：`Settings.Global picture_backlight`（0–100），改了以后 `tvmenusettingsservice` 会立即应用。需要 `WRITE_SECURE_SETTINGS`。

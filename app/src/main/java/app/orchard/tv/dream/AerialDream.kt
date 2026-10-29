@@ -110,11 +110,13 @@ class AerialDream : DreamService(), LifecycleOwner, SavedStateRegistryOwner {
 
     override fun onDreamingStarted() {
         super.onDreamingStarted()
+        running = this
         registry.currentState = Lifecycle.State.RESUMED
         runCatching { registerReceiver(screenOff, IntentFilter(Intent.ACTION_SCREEN_OFF)) }
     }
 
     override fun onDreamingStopped() {
+        if (running === this) running = null
         runCatching { unregisterReceiver(screenOff) }
         // Since Android 11 the dream lives in an activity: a key press finishes it, the window is
         // detached first (DESTROYED), and only then is the dream stopped. Moving back to CREATED
@@ -124,7 +126,25 @@ class AerialDream : DreamService(), LifecycleOwner, SavedStateRegistryOwner {
     }
 
     override fun onDetachedFromWindow() {
+        if (running === this) running = null
         registry.currentState = Lifecycle.State.DESTROYED
         super.onDetachedFromWindow()
+    }
+
+    companion object {
+        /** The dream on screen in this process, if any. Main thread only. */
+        private var running: AerialDream? = null
+
+        /**
+         * Ends the dream for a Home press the guard took before the system saw it. The system never
+         * got that press, so nothing else closed the dream: Home did nothing over it (TCL MT5879,
+         * Android 11, where the guard filters keys). True when there was a dream to end.
+         */
+        fun endForHome(): Boolean {
+            val dream = running ?: return false
+            DiagLog.i("dream ended by Home")
+            dream.finish()
+            return true
+        }
     }
 }
