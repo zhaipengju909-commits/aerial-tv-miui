@@ -34,8 +34,7 @@ class GlassBox(context: Context, private val radius: Float, private val bottomCo
      * The stand-in's own paint: drawn with [paint], its 90% stayed in the paint's alpha and every
      * baked glass after it let Home show through (Personalize over the tiles, MiTV-MFTR0).
      */
-    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Ui.GLASS }
-    private val box = RectF()
+    private val fill = Shapes.Tint()
 
     init { setWillNotDraw(false) }
 
@@ -62,10 +61,9 @@ class GlassBox(context: Context, private val radius: Float, private val bottomCo
     override fun onDraw(canvas: Canvas) {
         val b = baked
         if (b != null) canvas.drawBitmap(b, 0f, 0f, paint)
-        else {
+        else if (width > 0 && height > 0) {
             val r = Ui.px(radius)
-            box.set(0f, 0f, width.toFloat(), height.toFloat() + if (bottomCorners) 0f else r)
-            canvas.drawRoundRect(box, r, r, fill)
+            fill.draw(canvas, Shapes.mask(width, height, r, if (bottomCorners) r else 0f), 0f, 0f, Ui.GLASS)
         }
     }
 }
@@ -102,8 +100,8 @@ private fun LinearLayout.add(v: View, w: Int = LinearLayout.LayoutParams.MATCH_P
     return v
 }
 
-/** Control Center's pages, as the full app's CcPage: Lite has no inputs list and no updates. */
-enum class CcPage { Main, Boot }
+/** Control Center's pages, as the full app's CcPage: inputs only where Lite can list them, no updates. */
+enum class CcPage { Main, Boot, Inputs }
 
 /**
  * Control Center, as the full app's ControlCenter main page: the time and date with the network,
@@ -122,6 +120,9 @@ class ControlCenter(
     private val bootLabel: String?,
     private val clearBoot: () -> Unit,
     private val noInputs: () -> Unit,
+    /** Kids and Elders mode: leaving it (behind the PIN), and back into it. */
+    private val kidsLeave: () -> Unit = {},
+    private val kidsBack: () -> Unit = {},
 ) : Sheet(context, close) {
     private val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val col = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(Ui.pxi(16f), Ui.pxi(16f), Ui.pxi(16f), Ui.pxi(16f)) }
@@ -135,10 +136,34 @@ class ControlCenter(
         })
         panel.addView(col)
         when (page) {
-            CcPage.Main -> main()
+            CcPage.Main -> if (Kids.active) kidsMain() else main()
             CcPage.Boot -> boot()
+            CcPage.Inputs -> inputs()
         }
-        focusFirst()
+        // In Kids mode on leaving it, as the full app.
+        focusFirst(if (page == CcPage.Main && Kids.active) 1 else 0)
+    }
+
+    private fun volumeRow(): SliderRow = SliderRow(
+        context,
+        glyph = { if (it <= 0f) Glyph.SpeakerMuted else Glyph.Speaker },
+        read = { audio.getStreamVolume(AudioManager.STREAM_MUSIC) to audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC) },
+        write = { audio.setStreamVolume(AudioManager.STREAM_MUSIC, it, AudioManager.FLAG_PLAY_SOUND) },
+        shown = { v, _ -> if (v == 0) context.getString(R.string.cc_muted) else v.toString() },
+    )
+
+    /** Kids and Elders mode's page, as the full app's KidsPage: the time, volume, the day's time left, leaving. */
+    private fun kidsMain() {
+        col.add(context.label(timeText(context), 27.3f, 600, spacingEm = 0.05f))
+        col.add(context.label(dateText(), 13f, 500, Ui.SECONDARY), top = 4f)
+        kidsTimeLine(context)?.let { col.add(context.label(it, 13f, 500, Ui.SECONDARY), top = 6f) }
+        val volume = volumeRow()
+        col.add(volume, top = 12f)
+        val leave = MenuRow(context, Glyph.Shield, context.getString(if (Kids.kind == KidsKind.Kids) R.string.cc_kids_leave else R.string.cc_elders_leave))
+            .apply { action = kidsLeave }
+        col.add(leave, top = 6f)
+        row(volume)
+        row(leave)
     }
 
     private fun main() {
@@ -161,14 +186,34 @@ class ControlCenter(
         // The round buttons, spread across the panel.
         val buttons = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
         val inputs = RoundButton(context, Glyph.Input, context.getString(R.string.cc_inputs)).apply {
-            action = { if (!SystemIntents.openInputPicker(context)) noInputs() }
+            action = {
+                if (SystemIntents.xiaomiInputs(context).isNotEmpty()) goTo(CcPage.Inputs)
+                // The TV's own input list where its remote's key shows one (SystemIntents): the
+                // panel goes away then, as it does for an app; another make's picker keeps it.
+                else if (SystemIntents.openInputsPanel(context)) close()
+                else if (!SystemIntents.openInputPicker(context)) noInputs()
+            }
         }
         val netButton = RoundButton(context, netGlyph, context.getString(R.string.cc_network)).apply {
             level = netLevel
-            action = { locked { open(SystemIntents.network(context, netGlyph == Glyph.Ethernet)) } }
+            action = {
+                locked {
+                    // The TV's own network page where its remote's key shows one (SystemIntents).
+                    if (SystemIntents.openNetworkPanel(context)) close()
+                    else open(SystemIntents.network(context, netGlyph == Glyph.Ethernet))
+                }
+            }
         }
         val settings = RoundButton(context, Glyph.Gear, context.getString(R.string.cc_settings)).apply {
-            action = { locked { if (!SystemIntents.openSettingsPanel(context)) open(SystemIntents.settings(context)) } }
+            action = {
+                locked {
+                    if (!SystemIntents.openSettingsPanel(context)) {
+                        val intent = SystemIntents.settings(context)
+                        SystemIntents.noteSettingsOpened(intent)
+                        open(intent)
+                    }
+                }
+            }
         }
         for ((i, b) in listOf(inputs, netButton, settings).withIndex()) {
             if (i > 0) buttons.addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
@@ -177,13 +222,7 @@ class ControlCenter(
         col.add(buttons, top = 12f)
         row(inputs, netButton, settings)
 
-        val volume = SliderRow(
-            context,
-            glyph = { if (it <= 0f) Glyph.SpeakerMuted else Glyph.Speaker },
-            read = { audio.getStreamVolume(AudioManager.STREAM_MUSIC) to audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC) },
-            write = { audio.setStreamVolume(AudioManager.STREAM_MUSIC, it, AudioManager.FLAG_PLAY_SOUND) },
-            shown = { v, _ -> if (v == 0) context.getString(R.string.cc_muted) else v.toString() },
-        )
+        val volume = volumeRow()
         col.add(volume, top = 12f)
         row(volume)
 
@@ -207,6 +246,13 @@ class ControlCenter(
             row(brightness)
         }
 
+        // A parent left Kids and Elders mode: one press back into it, no PIN.
+        if (Kids.enabled && Kids.suspended) {
+            val back = MenuRow(context, Glyph.Kids, context.getString(if (Kids.kind == KidsKind.Kids) R.string.cc_kids_back else R.string.cc_elders_back))
+                .apply { action = kidsBack }
+            col.add(back, top = 6f)
+            row(back)
+        }
         val pers = MenuRow(context, Glyph.Photo, context.getString(R.string.cc_personalize)).apply { action = personalize }
         col.add(pers, top = 6f)
         row(pers)
@@ -240,6 +286,18 @@ class ControlCenter(
             val app = MenuRow(context, Glyph.Check, name)
             col.addView(app)
             row(app)
+        }
+    }
+
+    /** The inputs Lite can open itself (SystemIntents.xiaomiInputs), as the full app's list. */
+    private fun inputs() {
+        val back = MenuRow(context, Glyph.ChevronLeft, context.getString(R.string.cc_inputs)).apply { action = { goTo(CcPage.Main) } }
+        col.addView(back)
+        row(back)
+        for ((label, intent) in SystemIntents.xiaomiInputs(context)) {
+            val input = MenuRow(context, Glyph.Input, label).apply { action = { open(intent) } }
+            col.add(input, top = 6f)
+            row(input)
         }
     }
 
@@ -367,6 +425,7 @@ class Personalize(
     private val onHidden: () -> Unit,
     private val onSaverNow: () -> Unit,
     private val onPin: (Boolean) -> Unit,
+    private val onKids: () -> Unit = {},
 ) : Sheet(context, close) {
     private val col = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
@@ -524,6 +583,12 @@ class Personalize(
             choices(R.string.st_pin, null, listOf(false to R.string.st_pin_off, true to R.string.st_pin_on), LiteSettings.pinSet) { on ->
                 if (LiteSettings.pinSet != on) onPin(on)
             }
+            val kids = Chip(context, string(when {
+                !Kids.enabled -> R.string.st_off
+                Kids.kind == KidsKind.Kids -> R.string.kids_kind_kids
+                else -> R.string.kids_kind_elders
+            }), { false }, Glyph.ChevronRight).apply { action = onKids }
+            settingRow(R.string.st_kids, string(R.string.st_kids_hint), listOf(kids))
         }
     }
 
@@ -542,12 +607,10 @@ class Personalize(
      */
     private fun group(note: String? = null, rows: () -> Unit) {
         val box = object : LinearLayout(context) {
-            private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x0DFFFFFF }
-            private val rect = RectF()
+            private val tint = Shapes.Tint()
             init { orientation = VERTICAL; setWillNotDraw(false) }
             override fun onDraw(canvas: Canvas) {
-                rect.set(0f, 0f, width.toFloat(), height.toFloat())
-                canvas.drawRoundRect(rect, Ui.px(16f), Ui.px(16f), paint)
+                if (width > 0 && height > 0) tint.draw(canvas, Shapes.mask(width, height, Ui.px(16f)), 0f, 0f, 0x0DFFFFFF)
             }
         }
         val noteView = note(context, note ?: "").apply {
@@ -700,12 +763,10 @@ class Personalize(
     private fun phoneCard(): View {
         val box = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
         val white = object : FrameLayout(context) {
-            private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Ui.WHITE }
-            private val rect = RectF()
+            private val tint = Shapes.Tint()
             init { setWillNotDraw(false); setPadding(Ui.pxi(14f), Ui.pxi(14f), Ui.pxi(14f), Ui.pxi(14f)) }
             override fun onDraw(canvas: Canvas) {
-                rect.set(0f, 0f, width.toFloat(), height.toFloat())
-                canvas.drawRoundRect(rect, Ui.px(18f), Ui.px(18f), paint)
+                if (width > 0 && height > 0) tint.draw(canvas, Shapes.mask(width, height, Ui.px(18f)), 0f, 0f, Ui.WHITE)
             }
         }
         qrView.scaleType = android.widget.ImageView.ScaleType.FIT_CENTER

@@ -19,8 +19,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -34,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import app.orchard.tv.ui.components.smoothBorder
 import kotlinx.coroutines.flow.first
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.State
@@ -45,6 +44,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.TransformOrigin
@@ -100,6 +100,7 @@ import app.orchard.tv.ui.theme.Glyph
 import app.orchard.tv.ui.theme.GlyphIcon
 import app.orchard.tv.ui.theme.LocalReducedMotion
 import app.orchard.tv.ui.theme.Motion
+import app.orchard.tv.wallpaper.Wallpapers
 import app.orchard.tv.ui.theme.Palette
 import app.orchard.tv.ui.theme.Type
 import app.orchard.tv.ui.components.diagLayer
@@ -266,7 +267,15 @@ fun HomeBackground(
             if (a > 0.01f) drawDrawingIn(saverImage, saverPush(), a)
         }
         Box(Modifier.fillMaxSize().diagLayer("plate")) {
-            Plate(frosted ?: backdrop, filmGlass, plate, scroll, collapse, cover, filmStopped, toSaver, lift)
+            // Where the film's frames cannot be had (Wallpapers.filmGlassless), the plate is the one
+            // over a still picture, of the picture's glass, over the film moving or stopped: the
+            // picture is the frame decoded where the film was let go, and the film goes on from it
+            // (LiveWallpaper.goOnFromPicture; owner, TCL MT5879, issue #1238).
+            // Its glass follows the film where frames of it are decoded in the app while it moves
+            // ([filmGlass], every 15 s), so it is not the colours of a shot long gone.
+            val still = Wallpapers.filmGlassless && Wallpapers.moves() && (frosted ?: backdrop) != null
+            val film = filmGlass.takeUnless { Wallpapers.filmGlassless }
+            Plate(if (still) filmGlass ?: frosted ?: backdrop else frosted ?: backdrop, film, film != null, Wallpapers.filmGlassless, plate, scroll, collapse, cover, filmStopped, toSaver, lift, still)
         }
     }
 }
@@ -365,13 +374,14 @@ private fun Pictures(
  * moves or a new frame fades in, every [GLASS_EVERY_MS]: the film plays with Compose all but still.
  */
 @Composable
-private fun Plate(glass: ImageBitmap?, film: ImageBitmap?, plate: Rect?, scroll: () -> Float, collapse: Float, cover: () -> Float, filmStopped: () -> Float, toSaver: () -> Float, lift: () -> Float) {
+private fun Plate(glass: ImageBitmap?, film: ImageBitmap?, filmPlate: Boolean, deepSmoke: Boolean, plate: Rect?, scroll: () -> Float, collapse: Float, cover: () -> Float, filmStopped: () -> Float, toSaver: () -> Float, lift: () -> Float, stillOverFilm: Boolean = false) {
     var shown by remember { mutableStateOf(glass) }
     var under by remember { mutableStateOf<ImageBitmap?>(null) }
     val swap = remember { Animatable(1f) }
     fun visibility(): Float {
         val rest = 1f - smooth(((scroll() / collapse).coerceIn(0f, 1f) / 0.55f).coerceIn(0f, 1f))
-        return rest * (1f - cover() * (1f - filmStopped())) * (1f - toSaver())
+        // [stillOverFilm]: the still plate over the film too, moving or not.
+        return rest * (if (stillOverFilm) 1f else 1f - cover() * (1f - filmStopped())) * (1f - toSaver())
     }
     LaunchedEffect(glass) {
         if (glass === shown) return@LaunchedEffect
@@ -397,7 +407,7 @@ private fun Plate(glass: ImageBitmap?, film: ImageBitmap?, plate: Rect?, scroll:
     var screen by remember { mutableStateOf(Size.Zero) }
     suspend fun baked(glass: ImageBitmap?): ImageBitmap? {
         // A film's plate is never the still glass (below): nothing to bake.
-        if (glass == null || plate == null || screen == Size.Zero || film != null) return null
+        if (glass == null || plate == null || screen == Size.Zero || filmPlate) return null
         val size = screen
         return withContext(Dispatchers.Default) {
             bakePlate(plateTinted(glass), size, plate, with(density) { PlateCorner.toPx() }, with(density) { 1.2.dp.toPx() })
@@ -409,9 +419,9 @@ private fun Plate(glass: ImageBitmap?, film: ImageBitmap?, plate: Rect?, scroll:
     var filmBottom by remember { mutableStateOf<ImageBitmap?>(null) }
     var smoke by remember { mutableStateOf<ImageBitmap?>(null) }
     val filmSwap = remember { Animatable(1f) }
-    LaunchedEffect(plate, screen) {
+    LaunchedEffect(plate, screen, deepSmoke) {
         if (plate == null || screen == Size.Zero) return@LaunchedEffect
-        smoke = withContext(Dispatchers.Default) { bakePlate(smokeGlass(), screen, plate, with(density) { PlateCorner.toPx() }, with(density) { 1.2.dp.toPx() }) }
+        smoke = withContext(Dispatchers.Default) { bakePlate(smokeGlass(if (deepSmoke) FILM_SMOKE_ALONE else FILM_SMOKE), screen, plate, with(density) { PlateCorner.toPx() }, with(density) { 1.2.dp.toPx() }) }
     }
     LaunchedEffect(film, plate, screen) {
         if (film == null || plate == null || screen == Size.Zero) {
@@ -440,14 +450,14 @@ private fun Plate(glass: ImageBitmap?, film: ImageBitmap?, plate: Rect?, scroll:
         // A film's plate stays the film's, moving or stopped: switched to the still glass as the
         // film stopped (a menu, Control Center, the grid), it turned from see-through to frosted
         // all over, another colour (the owner, Xiaomi MiTV-MFTR0).
-        val alpha = if (film != null) 0f else visibility()
+        val alpha = if (filmPlate) 0f else visibility()
         // The film's plate, while the film shows and the plate over a picture does not hide it.
         // With no frame to frost (an input's picture, which cannot be copied) it is the smoke and
         // the lit edge alone, so the top row keeps a plate over anything.
         val base = (1f - smooth(((scroll() / collapse).coerceIn(0f, 1f) / 0.55f).coerceIn(0f, 1f))) * (1f - toSaver())
         val frame = filmTop
         val edge = smoke
-        if (edge != null && (film != null || cover() > 0.01f) && alpha < 0.99f && base > 0.01f) {
+        if (!stillOverFilm && edge != null && (filmPlate || cover() > 0.01f) && alpha < 0.99f && base > 0.01f) {
             val p = (scroll() / collapse).coerceIn(0f, 1f)
             val r = plate.translate(0f, -scroll() - lift()).inflate(PlateSwell.toPx() * smooth((p / 0.55f).coerceIn(0f, 1f)))
             val t = filmSwap.value
@@ -493,9 +503,9 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawBaked(image: Im
 private fun smooth(x: Float) = x * x * (3f - 2f * x)
 
 /** The film plate's tint over the film and its frosted frame, as one pixel the plate stretches. */
-private fun smokeGlass(): ImageBitmap =
+private fun smokeGlass(color: Int): ImageBitmap =
     android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888)
-        .apply { eraseColor(FILM_SMOKE) }.asImageBitmap()
+        .apply { eraseColor(color) }.asImageBitmap()
 
 /** How much of the film plate is its frosted key frame; the rest is the film itself, moving. */
 private const val FILM_FROST = 0.55f
@@ -505,6 +515,14 @@ private const val FILM_FROST = 0.55f
  * Deeper since the film is not shaded (18% before): the shade had darkened the film under it too.
  */
 private val FILM_SMOKE = android.graphics.Color.argb(72, 0, 0, 0)
+
+/**
+ * With no frosted frame under it (Wallpapers.filmGlassless): a milky white veil, not smoke. Black
+ * (40%) made the plate a dark slab over the film, nothing like glass (the owner, TCL MT5879,
+ * 2026-11-01). White lifts it as glass lit from within, as Tigris and CleanTV do with no blur; the
+ * lit edge does the rest. The plate with a frosted frame (FILM_SMOKE) the owner keeps as it is.
+ */
+private val FILM_SMOKE_ALONE = android.graphics.Color.argb(38, 255, 255, 255)
 
 /** A new key frame fades in over the last: slow, as the glass is soft, and seldom (GLASS_EVERY_MS). */
 private const val FILM_SWAP_MS = 700
@@ -784,7 +802,7 @@ fun VpnBadge(color: Color, modifier: Modifier = Modifier, fontSize: TextUnit = 1
         stringResource(R.string.net_vpn),
         style = Type.Caption.copy(color = color, fontSize = fontSize, fontWeight = FontWeight.W700, letterSpacing = 0.04.em),
         modifier = modifier
-            .border(1.2.dp, color, RoundedCornerShape(4.dp))
+            .smoothBorder(1.2.dp, color, 4.dp)
             .padding(horizontal = 4.dp, vertical = 1.dp),
     )
 }
@@ -820,7 +838,7 @@ fun StatusPill(
         Row(
             Modifier
                 .clip(RoundedCornerShape(50))
-                .background(bg)
+                .drawBehind { drawRect(bg) }
                 .height(34.dp)
                 .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically,

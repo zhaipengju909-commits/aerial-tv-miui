@@ -154,6 +154,18 @@ adb shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c 
 
 建议其他 TCL 机型先探一下有没有默认值：`getprop persist.sys.launcher.component`，再核一次 `resolve-activity`。
 
+### 75V2：留着属性，改用裸组件启动（1.76，2026-11-01 实测）
+
+上面那条警告在 75V2 上是死结：`persist.tcl.bootappmode` 通道走不通（PR #476），而 `persist.sys.launcher.component` 一设，从 Aerial 打开 App 就崩。1.76 起不再需要二选一。
+
+固件 `V8-S48CT05-LF1V142`，Aerial 1.76（versionCode 97），属性保持 `app.orchard.tv/app.orchard.tv.MainActivity`：
+
+- **1.76 已有的那处修复不够**。`MainActivity` 在 SDK < 28 时移除 ActivityOptions 里的 `android:activity.packageName`，但点 CIBN酷喵 仍然崩：`java.lang.SecurityException: Package app.orchard.tv does not belong to 10079`，`dumpsys activity` 里 `launchedFromPackage=app.orchard.tv`。改写发生在 AMS 层，不在 options 里，所以 [上一节](#开机直达persistsyslaunchercomponent) 的警告照样成立。
+- **解法是裸组件**。`AppEntry.launchIntent()` 在固件带 `persist.sys.launcher.component` 时只 `setComponent`（不带 `ACTION_MAIN` + `CATEGORY_*`），固件便不改写来源；`MainActivity.open()` 同样把 `ACTION_DELETE` / `ACTION_APPLICATION_DETAILS_SETTINGS` 先 `resolveActivity` 再转裸组件，否则长按菜单的「卸载 / 应用信息」一样崩。属性为空（固件不改写）时两者行为都不变。
+- **实测**：CIBN酷喵（`com.cibn.tv`）、云视听极光（`com.ktcp.csvideo`）、Kodi、TiviMate 从 Aerial 打开全部正常，`logcat` 里零 `does not belong to`；Home 键回 Aerial，不出 `com.tcl.cyberui`；长按菜单六项齐全，选「卸载」弹出 `com.android.packageinstaller/.UninstallerActivity`，取消后包完好。桌面布局和设置在重装后完整保留（27 个瓷砖、7 个信号源）。
+- **重装注意**：自己编译的签名和官方不同，要先 `adb shell pm uninstall -k app.orchard.tv`（`-k` 保住 `/data/data`，布局和设置都在），但 `-k` 会**连 disabled-user 状态一起留下**：装完 `dumpsys package` 显示 `enabled=3`，`cmd package set-home-activity` 报 `IllegalArgumentException: Component ... cannot be home on user 0`，`query-activities` 里也找不到 Aerial。先 `pm enable app.orchard.tv` 再设，就 `Success`。
+- 触发长按菜单用 `input keyevent --longpress 23`；**触摸 `input swipe X Y X Y 900` 在 Aerial 上不触发长按**（和 CleanYourTV 桌面相反）。
+
 ## 已知问题
 
 ### 1. 冷启动时 MainActivity 崩 2 次（CE 存储未解锁）
@@ -285,3 +297,7 @@ adb shell cmd package install-existing com.tcl.common.weather
 
 一个屡试不爽的技巧：**先让它失败一次，拿报错字符串当 grep 关键词**
 （例如 `disable install launcher app not signature by tcl`）。
+
+## sugarcane_mi（MStar m7221，安卓 8.0，#1076）
+
+这台对 App 的 HOME 查询什么都不返回（`cmd package query-activities` 也是 `No activity found`），连 `com.tcl.cyberui` 都不列，守护就不知道原桌面是谁，开机后一直停在 cyberui（报告人的 Agent 在 2.5 / 4.5 / 6.4 分钟采样），打开一次 Aerial 后主页键才正常（走主页键广播那条判断）。2026-11-01 起把 `com.tcl.cyberui/.MainActivity` 列进守护的 `FIRMWARE_HOMES_WITHOUT_FILTER`。没有真机验证。同为 sugarcane 的 #898 能正常解析 HOME。

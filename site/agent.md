@@ -104,6 +104,7 @@ curl -fsSL https://aerial.qust.me/install.sh | KEEP_ADB=1 TV=<IP> bash
 2. 安装：`adb install -r aerial-standard.apk`，输出 `Success` 继续。失败时：
    - 输出里有 **`INSTALL_FAILED_VERIFICATION_FAILURE`**：这是 TCL，它拒绝一切 adb 安装。按下面「TCL 安装」处理，装好后从第 3 条继续。
    - 输出里有 **`INSTALL_FAILED_USER_RESTRICTED`**（创维等）：见「常见情况」里的创维一条，处理后再装。
+   - 输出里有 **`INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES`** 或 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`：电视上的 Aerial 是别人用另一把钥匙签的，不能覆盖。先问户主：卸载（`adb uninstall app.orchard.tv`）会丢掉它的设置、壁纸和照片，同意后再装。有的固件（TCL 安卓 5.1）失败时 `adb` 照样返回 0，只看输出里有没有 `Success`。
    - 其他失败（比如固件不许装桌面类 App，OPPO 电视报 `INSTALL_FAILED_DUPLICATE_PERMISSION: App installation is banned, because of launcher categories`）：改用 `aerial-guard.apk`（同一个地址，把 `standard` 换成 `guard`）再装。
 
 3. 授予只有 adb 能给的权限（某条报错可以忽略，继续下一条）：
@@ -122,8 +123,14 @@ curl -fsSL https://aerial.qust.me/install.sh | KEEP_ADB=1 TV=<IP> bash
    adb shell appops set app.orchard.tv AUTO_START allow
    adb shell appops set app.orchard.tv ASSOC_START allow
    ```
+   Android 6、7 没有 `cmd`（`allow_listener` 那条报 `cmd: not found`）：先运行 `adb shell settings get secure enabled_notification_listeners`。输出是 `null` 或空的，运行 `adb shell settings put secure enabled_notification_listeners app.orchard.tv/app.orchard.tv.guard.RevivalListener`；否则把 `:app.orchard.tv/app.orchard.tv.guard.RevivalListener` 加在原值后面再 `settings put`，原有的不要删。乐视等会在后台强停 App 的固件靠它把 Aerial 拉回来（#1127）。
    最后四条 `appops` 只有 TCL / 雷鸟认（不同固件认其中两条），别的电视报错是正常的。
    `ACCESS_RESTRICTED_SETTINGS` 只有 Android 13 及以上认：用文件装的 App 在这些系统上开不了无障碍，守护会一直被关掉（#811 #829）。
+   TCL / 雷鸟（装有 `com.tcl.ttvs`，或 `adb shell settings get system boot_app_componentname` 已经有值）：先把 `boot_app_mode`、`boot_app_componentname` 两项的原值告诉用户并记下，再运行下面两条，开机第一个画面就是 Aerial，不再先出 TCL 桌面（#1185）。`boot_app_mode` 原来有值就只改第二条：
+   ```
+   adb shell settings put system boot_app_mode boot_launcher
+   adb shell settings put system boot_app_componentname app.orchard.tv/.MainActivity
+   ```
 
    再启动一次 Aerial，等 5 秒后编译（要几十秒，让 Aerial 在电视上更流畅；有的电视要先启动过一次，编译才有效）：
    ```
@@ -144,7 +151,7 @@ curl -fsSL https://aerial.qust.me/install.sh | KEEP_ADB=1 TV=<IP> bash
 
 6. 启动 Aerial：`adb shell am start -W -n app.orchard.tv/.MainActivity`，输出里要有 `Status: ok`。
 
-7. 设为默认桌面（装的是 guard 版时跳过）：
+7. 设为默认桌面（装的是 guard 版时跳过；**小米也跳过**：`adb shell pm path com.mitv.tvhome` 有输出就是小米。有的小米 Android 9 会真的接受这一步，之后短按电源键不再息屏，见 #848，小米交给下一步的桌面守护）：
    ```
    adb shell cmd role add-role-holder --user 0 android.app.role.HOME app.orchard.tv
    ```
@@ -236,13 +243,15 @@ adb shell "sleep 8; dumpsys window | grep mCurrentFocus"
 - 第 3 条有 `app.orchard.tv/app.orchard.tv.guard.HomeGuardService`：守护已打开（原生 Android TV 已是默认桌面时可能没有，看第 6 条即可）。
 - 第 4 条大于 0：守护正在运行。
 - **第 6 条包含 `app.orchard.tv`：按主页键进入 Aerial，安装成功。** 这一条不满足，就不能告诉用户装好了。有的固件按主页键后自家桌面要停几秒，守护才把 Aerial 拉回来（OPPO ColorOS TV 约 5 秒，#664）：第 6 条是原桌面时，再运行一次 `adb shell "sleep 5; dumpsys window | grep mCurrentFocus"`，两次都不是 `app.orchard.tv` 才算失败。
-- 第 2、3、6 条的原始输出必须贴给用户，不要只说「成功」。第 2 条报错（老系统没有 `cmd`）时，改用 `adb shell pm resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME -c android.intent.category.DEFAULT`。
+- 第 2、3、6 条的原始输出必须贴给用户，不要只说「成功」。第 2 条报错（老系统没有 `cmd`）时，改用 `adb shell pm resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME -c android.intent.category.DEFAULT`。Android 6 上这两条都可能没有（`cmd: not found`、`pm` 报 `unknown command`，#1127 #1145），那就跳过第 2 条，以第 3、4 条和第 6 条为准；有的老固件上 `input keyevent KEYCODE_HOME` 不经过守护，第 6 条看着失败时请用户用实体遥控器按一次主页键再看。
 
 第 6 条不是 `app.orchard.tv` 时，等 5 秒再运行一次第 5、6 条（有的电视守护启动得慢）。还不是，看「常见情况」。
 
 `input keyevent` 模拟的主页键不经过守护的按键过滤，在少数电视上（索尼 Android 9）结果和实体遥控器不同：这时请用户用实体遥控器按一次主页键，再只运行第 6 条，以这次为准。
 
 都通过后，征得用户同意再 `adb reboot`，等一两分钟电视开机后重新 `adb connect <IP>:5555`，再跑一次第 6 条，确认开机直接进入 Aerial。
+
+全部做完后运行 `adb disconnect`：有的电视同一时间只接受一台设备，这台电脑不断开，用户手机上的甲壳虫等工具就连不上（#764）。一行命令装完会自动断开。
 
 ## 还原
 
@@ -270,11 +279,15 @@ adb shell appops set app.orchard.tv ACCESS_RESTRICTED_SETTINGS default
 adb shell am force-stop app.orchard.tv
 adb shell cmd role remove-role-holder --user 0 android.app.role.HOME app.orchard.tv
 ```
+TCL / 雷鸟改过开机组件的，用记下的原值改回去（原来是空的就写 `''`）：`adb shell settings put system boot_app_componentname <原值>`，`boot_app_mode` 同样。
+
+Android 6、7 没有 `cmd` 时，`disallow_listener` 那条改为：`settings get secure enabled_notification_listeners`，去掉其中 `app.orchard.tv/app.orchard.tv.guard.RevivalListener` 这一项（连同它前面的 `:`）后 `settings put` 回去；只剩它自己时用 `adb shell settings delete secure enabled_notification_listeners`。
 
 然后：
 
 - `adb shell settings get secure screensaver_components` 是 `app.orchard.tv/...` 时，用 `adb shell settings get secure screensaver_default_component` 的结果写回去：`adb shell settings put secure screensaver_components <默认值>`。
 - `adb shell settings get secure enabled_accessibility_services`：从结果里去掉 `app.orchard.tv/app.orchard.tv.guard.HomeGuardService`（和它前后多余的冒号），其他服务原样保留写回；只剩它自己时运行 `adb shell settings delete secure enabled_accessibility_services`。
+- 小米（`adb shell pm path com.mitv.tvhome` 有输出）：`adb shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME -c android.intent.category.DEFAULT` 的最后一行是 `app.orchard.tv/...` 时，运行 `adb shell cmd package set-home-activity --user 0 com.mitv.tvhome/.MainActivityUserMode`，再重启电视一次（#848：默认桌面改成 Aerial 后短按电源键不息屏）。
 - 海信 VIDAA：`adb shell settings get global aerial_vt_home_pkg` 有值（不是 `null`）时，运行 `adb shell setprop persist.vt.use_home_pkg <这个值>` 和 `adb shell settings delete global aerial_vt_home_pkg`。没有值、但 `adb shell getprop persist.vt.use_home_pkg` 是 `app.orchard.tv`（1.15 及以前手动改过）并且装有 `com.jamdeo.tv.vod` 时，运行 `adb shell setprop persist.vt.use_home_pkg com.jamdeo.tv.vod`。
 - 要卸载时 `adb uninstall app.orchard.tv`。
 - 最后 `adb shell input keyevent KEYCODE_HOME`，电视回到原来的桌面。

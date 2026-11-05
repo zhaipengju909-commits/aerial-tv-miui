@@ -80,8 +80,19 @@ class AerialDream : DreamService(), LifecycleOwner, SavedStateRegistryOwner {
         window.decorView.setViewTreeSavedStateRegistryOwner(this)
     }
 
+    /** Keys pressed while the dream is up and not lifted yet. */
+    private val keysDown = HashSet<Int>()
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (skips.onKey(event)) return true
+        // A lift whose press never came here ends the dream too: Coocaa C10's hotkey service keeps
+        // the press of some keys and lets only the lift through (issue #915; see MainActivity).
+        if (event.action == KeyEvent.ACTION_DOWN) keysDown += event.keyCode
+        else if (!event.isCanceled && !keysDown.remove(event.keyCode) && event.keyCode != MainActivity.dreamWokeKey) {
+            DiagLog.i("dream: ${KeyEvent.keyCodeToString(event.keyCode)} lifted with no press; ending it")
+            finish()
+            return true
+        }
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
             MainActivity.dreamWokeAt = event.eventTime
             MainActivity.dreamWokeKey = event.keyCode
@@ -134,6 +145,9 @@ class AerialDream : DreamService(), LifecycleOwner, SavedStateRegistryOwner {
     companion object {
         /** The dream on screen in this process, if any. Main thread only. */
         private var running: AerialDream? = null
+
+        /** Aerial's dream is on screen: Kids mode does not count it as watching. */
+        val showing: Boolean get() = running != null
 
         /**
          * Ends the dream for a Home press the guard took before the system saw it. The system never

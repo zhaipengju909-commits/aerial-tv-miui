@@ -15,7 +15,9 @@ The protocol, read from 多屏互动 5.30 on TCL MT5879 (see docs/devices/tcl-mt
   source 2 with an apkPathMd5 marks a phone-local APK, which skips the store lookup and asks the viewer.
   The TV answers "223>>INSTALL>>package>>label>>confirm_pending|denied|installing|installed>>apkPathMd5",
   then, once the viewer agrees, "223>>PROGRESS>>package>>label>>stage>>percent>>apkPathMd5":
-  stage 1 downloading, 3 installing, 5 installed, 2 failed.
+  stage 1 downloading, 3 installing, 5 installed, 2 failed, 4 refused by the TV's installer after a
+  complete download (TCL's verifier on an APK that declares HOME and is not signed by TCL, issue #1163;
+  the TV shows 安装失败 at 100%).
 
 Exits 0 once the TV reports the app installed, 1 if the viewer refused, the install failed, or
 nothing happened in time.
@@ -39,6 +41,8 @@ def messages(buf):
     out = []
     while len(buf) >= 4:
         n = struct.unpack(">i", buf[:4])[0]
+        if n < 0:
+            raise ValueError("negative T-Cast message length: {}".format(n))
         if len(buf) < 4 + n:
             break
         out.append(buf[4:4 + n].decode("utf-8", "replace"))
@@ -60,9 +64,9 @@ def main():
     send(sock, ">>".join(["223", "INSTALL", package, label, url, "2", version, "20", "", "", "", path_md5]))
 
     buf = b""
-    last_beat = time.time()
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    last_beat = time.monotonic()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         try:
             chunk = sock.recv(65536)
             if not chunk:
@@ -70,7 +74,12 @@ def main():
             buf += chunk
         except socket.timeout:
             pass
-        found, buf = messages(buf)
+        try:
+            found, buf = messages(buf)
+        except ValueError as exc:
+            sock.close()
+            print("Invalid response from the TV: {}.".format(exc), file=sys.stderr)
+            return 1
         for msg in found:
             parts = msg.split(">>")
             if len(parts) < 5 or parts[0] != "223" or parts[2] != package:
@@ -89,10 +98,14 @@ def main():
                 if stage == "2":
                     print("The TV could not download or install the APK.", file=sys.stderr)
                     return 1
+                if stage == "4":
+                    print("The TV downloaded the APK but refused to install it. TCL refuses any APK that "
+                          "declares a home screen: push aerial-guard.apk.", file=sys.stderr)
+                    return 1
         # The TV drops a quiet session, and with it the pending install.
-        if time.time() - last_beat > 5:
+        if time.monotonic() - last_beat > 5:
             send(sock, "150>>")
-            last_beat = time.time()
+            last_beat = time.monotonic()
     sock.close()
     print("Timed out waiting for the TV.", file=sys.stderr)
     return 1

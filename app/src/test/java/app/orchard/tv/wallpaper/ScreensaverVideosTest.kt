@@ -69,12 +69,29 @@ class ScreensaverVideosTest {
     }
 
     @Test
-    fun totalQuotaDoesNotEvictExistingFilms() {
-        repeat(3) { stored(it.toString().padStart(32, '0'), 160L * 1024 * 1024) }
-        val extra = upload()
-        RandomAccessFile(extra, "rw").use { it.setLength(40L * 1024 * 1024) }
-        assertNull(ScreensaverVideos.add(context, extra, "one-more.mp4"))
-        assertEquals(3, ScreensaverVideos.all(context).size)
+    fun aFullLibraryHasNoRoomAndDoesNotEvictExistingFilms() {
+        repeat(64) { stored(it.toString().padStart(32, '0')) }
+        assertEquals(0L, ScreensaverVideos.room(context))
+        assertNull(ScreensaverVideos.add(context, upload(), "one-more.mp4"))
+        assertEquals(64, ScreensaverVideos.all(context).size)
+    }
+
+    @Test
+    fun roomLeavesHalfTheFreeSpaceAndNeverPassesTheFileCap() {
+        val free = File(context.filesDir, "screensaver-videos").apply { mkdirs() }.usableSpace
+        val room = ScreensaverVideos.room(context)
+        assertTrue(room <= free / 2 && room <= ScreensaverVideos.MAX_FILE_BYTES)
+    }
+
+    @Test
+    fun brokenOrOversizedStreamsLeaveNothingBehind() {
+        val short = "short".toByteArray().inputStream()
+        assertNull(ScreensaverVideos.receive(context, short, 100, "cut.mp4"))
+        val unread = "never read".toByteArray().inputStream()
+        assertNull(ScreensaverVideos.receive(context, unread, ScreensaverVideos.MAX_FILE_BYTES + 1, "huge.mp4"))
+        assertEquals(10, unread.available())
+        assertTrue(ScreensaverVideos.all(context).isEmpty())
+        assertFalse(root.listFiles().orEmpty().any { it.name.startsWith("import-") })
     }
 
     @Test
@@ -95,5 +112,18 @@ class ScreensaverVideosTest {
         assertTrue(ScreensaverVideos.delete(context, film.name))
         assertTrue(photo.exists())
         assertFalse(ScreensaverVideos.delete(context, film.name))
+    }
+
+    @Test
+    fun longTitleKeepsItsExtension() {
+        val title = ScreensaverVideos.titleOf("C:\\films\\" + "a".repeat(200) + ".MP4")
+        assertEquals(120, title!!.length)
+        assertTrue(title.endsWith(".MP4"))
+        assertEquals("trip.mov", ScreensaverVideos.titleOf("/sdcard/trip.mov"))
+        assertNull(ScreensaverVideos.titleOf("photo.jpg"))
+        assertNull(ScreensaverVideos.titleOf("noextension"))
+        // Not cut through a surrogate pair.
+        val emoji = "a".repeat(115) + "\uD83C\uDF04" + ".mp4"
+        assertEquals("a".repeat(115) + ".mp4", ScreensaverVideos.titleOf(emoji))
     }
 }

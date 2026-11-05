@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.TileMode
@@ -57,15 +58,30 @@ import kotlin.math.roundToInt
  *
  * Replaces clip + background + border; [bottomCorners] false for a sheet rising from the bottom.
  * The continuous outline is a baked mask (see SmoothCorners.kt); children are clipped to a plain
- * rounded rect, which holds it.
+ * rounded rect, which holds it. [seeThroughFilm]: nothing but the film lies under the panel, which
+ * over a film without frames (Wallpapers.filmGlassless) is then see-through like the plate.
  */
-fun Modifier.liquidGlass(corner: Dp, bottomCorners: Boolean = true): Modifier = composed {
+fun Modifier.liquidGlass(corner: Dp, bottomCorners: Boolean = true, seeThroughFilm: Boolean = false): Modifier = composed {
     // The glass a panel opened with stays while it is open, unless the wallpaper itself changes
     // (chosen in Personalize). A moving film that stops as a panel opens gets its glass made again
     // twice within the next second or so, from a frame near where it stopped and then from that
     // very frame (LiveWallpaper): followed, the menu's and Control Center's glass changed twice
     // just after they opened (the owner, Xiaomi MiTV-MFTR0). The next opening takes the newest.
-    val latest = Wallpapers.frosted.takeIf { Wallpapers.backdrop != null }
+    // Over a moving wallpaper whose frames cannot be had (Wallpapers.filmGlassless) one solid
+    // colour: the frosted frame there is one from minutes before, and Control Center and
+    // Personalize showed its colours over the paused film, another shot (TCL MT5879, 2026-10-30).
+    // See-through instead would show the tiles under the panel; Control Center over the top row,
+    // with only the film under it, is see-through as the plate is: solid, it was a grey slab beside
+    // a plate the film shows through (seen on Xiaomi MiTV-MFFU1 while a slow copy kept it from
+    // the film's frames, 2026-11-01; TCL MT5879 is such a TV for good).
+    // Now the picture's glass, as over a still picture, once the picture is there: the frame
+    // decoded in the app where the film was let go, which the film goes on from (owner, TCL
+    // MT5879, issue #1238). Solid only until a picture exists.
+    val solid = Wallpapers.moves() && Wallpapers.filmGlassless && Wallpapers.frosted == null
+    // Where the film's frames cannot be had otherwise, the latest glass of the moving film, decoded
+    // in the app (Wallpapers.filmFrost), over the picture's, which may be another shot.
+    val latest = (if (Wallpapers.moves() && Wallpapers.filmGlassless) Wallpapers.filmFrost ?: Wallpapers.frosted else Wallpapers.frosted)
+        .takeIf { Wallpapers.backdrop != null }
     val held = remember(Wallpapers.selectedId, latest == null) { latest }
     val (frost, under, swap) = rememberFrostSwap(held)
     var at by remember { mutableStateOf(Offset.Zero) }
@@ -96,7 +112,11 @@ fun Modifier.liquidGlass(corner: Dp, bottomCorners: Boolean = true): Modifier = 
             var drawnRoot = IntSize.Zero
             var drawnT = -1f
             onDrawBehind {
-                if (shader == null || brush == null || root == IntSize.Zero) {
+                if (solid) {
+                    drawImage(flat, dstSize = IntSize(w, h), colorFilter = ColorFilter.tint(if (seeThroughFilm) FilmGlass else FilmPanel))
+                    if (seeThroughFilm) drawImage(filmSheen, dstSize = IntSize(w, h), filterQuality = FilterQuality.Low)
+                    drawGlassEdge(size, radius, bottomCorners)
+                } else if (shader == null || brush == null || root == IntSize.Zero) {
                     drawImage(flat, dstSize = IntSize(w, h), colorFilter = ColorFilter.tint(Palette.Glass))
                     drawGlassEdge(size, radius, bottomCorners)
                 } else if (AerialSettings.lite) {
@@ -231,6 +251,39 @@ private fun liteGlass(frost: ImageBitmap): Color = synchronized(liteColors) {
 }
 
 private val liteColors = java.util.WeakHashMap<ImageBitmap, Color>()
+
+/**
+ * A panel over a moving wallpaper whose frames cannot be had: opaque, so the tiles under it do not
+ * show, and as light as the frosted glass is elsewhere (PanelTint over a daytime picture comes to
+ * about this grey). The old near-black (0x26262A) read as a dark slab, not glass (the owner, TCL
+ * MT5879, 2026-11-01).
+ */
+private val FilmPanel = Color(0xFF4A4B51)
+
+/**
+ * The same see-through, over the film and Control Center's dimming (28% black): a smoke dense
+ * enough that what a blur would soften is quieted instead. The film shows at about a fifth of its
+ * contrast (19% of its light, lifted by 46), so its colours and movement still come through but
+ * not its edges. At 33% black it came out at 48% of its light: the trees and cliffs behind it were
+ * as sharp as outside it, under the white text, a frame drawn over the film more than glass (the
+ * owner, TCL MT5879, 2026-11-03).
+ */
+private val FilmGlass = Color(red = 62, green = 63, blue = 69, alpha = 189)
+
+/**
+ * Light from above over [FilmGlass]: white, 10% at the top edge, gone by 45% of the way down, so
+ * the smoke reads as a pane catching the room's light. Baked as one column and stretched, as no
+ * gradient is drawn per frame here.
+ */
+private val filmSheen: ImageBitmap by lazy {
+    val h = 96
+    val bitmap = android.graphics.Bitmap.createBitmap(1, h, android.graphics.Bitmap.Config.ARGB_8888)
+    for (y in 0 until h) {
+        val t = (1f - (y + 0.5f) / h / 0.45f).coerceIn(0f, 1f)
+        bitmap.setPixel(0, y, android.graphics.Color.argb((t * t * 0.10f * 255).roundToInt(), 255, 255, 255))
+    }
+    bitmap.asImageBitmap()
+}
 
 private val PanelTint = ColorFilter.colorMatrix(ColorMatrix(floatArrayOf(
     0.48f, 0f, 0f, 0f, 14f,

@@ -51,13 +51,15 @@ import app.orchard.tv.ui.components.Pressable
 import app.orchard.tv.ui.components.consumeTaps
 import app.orchard.tv.ui.components.dismissOnTap
 import app.orchard.tv.ui.components.liquidGlass
+import app.orchard.tv.ui.components.smoothBackground
 import app.orchard.tv.ui.theme.Glyph
 import app.orchard.tv.ui.theme.GlyphIcon
 import app.orchard.tv.ui.theme.Motion
 import app.orchard.tv.ui.theme.Palette
 import app.orchard.tv.ui.theme.Type
 
-enum class PinMode { Unlock, Create }
+/** [Verify] checks the PIN without unlocking the rest for a while (Kids mode: leaving it, more time). */
+enum class PinMode { Unlock, Verify, Create }
 
 private const val PIN_LENGTH = 4
 
@@ -89,7 +91,7 @@ private fun PinPanel(mode: PinMode, onDone: () -> Unit, onCancel: () -> Unit) {
     var first by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<Int?>(null) }
     // Null while a new PIN's kind is still to be chosen.
-    var arrows by remember { mutableStateOf(if (mode == PinMode.Unlock) AerialSettings.pinArrows else null) }
+    var arrows by remember { mutableStateOf(if (mode != PinMode.Create) AerialSettings.pinArrows else null) }
     val one = remember { FocusRequester() }
     val choice = remember { FocusRequester() }
     val pad = remember { FocusRequester() }
@@ -107,6 +109,7 @@ private fun PinPanel(mode: PinMode, onDone: () -> Unit, onCancel: () -> Unit) {
     fun complete(pin: String) {
         when (mode) {
             PinMode.Unlock -> if (AerialSettings.unlock(pin)) onDone() else error = R.string.pin_wrong
+            PinMode.Verify -> if (AerialSettings.pinMatches(pin)) onDone() else error = R.string.pin_wrong
             PinMode.Create -> when (val earlier = first) {
                 null -> { first = pin; error = null }
                 pin -> { AerialSettings.choosePin(pin, arrows = arrows == true); onDone() }
@@ -125,7 +128,7 @@ private fun PinPanel(mode: PinMode, onDone: () -> Unit, onCancel: () -> Unit) {
     fun erase() { entered = entered.dropLast(1) }
 
     val title = when {
-        mode == PinMode.Unlock -> R.string.pin_enter
+        mode != PinMode.Create -> R.string.pin_enter
         first == null -> R.string.pin_create
         else -> R.string.pin_confirm
     }
@@ -234,7 +237,7 @@ private val ARROWS = mapOf(
 private fun PinKey(onClick: () -> Unit, focusRequester: FocusRequester? = null, width: Dp = 64.dp, content: @Composable (Color) -> Unit) {
     Pressable(onClick = onClick, focusRequester = focusRequester, focusedScale = 1.08f) { state ->
         val bg by animateColorAsState(if (state.focused) Palette.Focus else Palette.Fill, tween(140, easing = Motion.EaseOut), label = "pin-key")
-        Box(Modifier.size(width, 48.dp).clip(RoundedCornerShape(12.dp)).background(bg), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(width, 48.dp).smoothBackground({ bg }, 12.dp), contentAlignment = Alignment.Center) {
             content(if (state.focused) Palette.OnFocus else Palette.Label)
         }
     }

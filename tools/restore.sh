@@ -15,6 +15,14 @@ adb connect "$SERIAL" >/dev/null
 # First take away what lets Aerial switch the guard back on, or it would simply do so.
 adb shell am broadcast -a "$PKG.CONFIG" -n "$PKG/.guard.ConfigReceiver" --ez keep_adb false --ez own_screensaver false >/dev/null 2>&1 || true
 adb shell cmd notification disallow_listener "$PKG/$PKG.guard.RevivalListener" >/dev/null 2>&1 || true
+# Android 6 and 7 have no `cmd`: take it out of the setting itself, leaving the other listeners.
+LISTENERS=$(adb shell settings get secure enabled_notification_listeners 2>/dev/null | tr -d '\r')
+case "$LISTENERS" in
+  *"$PKG/$PKG.guard.RevivalListener"*)
+    REST=$(printf '%s' "$LISTENERS" | tr ':' '\n' | grep -v "^$PKG/" | paste -sd: - || true)
+    if [ -n "$REST" ]; then adb shell settings put secure enabled_notification_listeners "$REST" >/dev/null 2>&1 || true
+    else adb shell settings delete secure enabled_notification_listeners >/dev/null 2>&1 || true; fi ;;
+esac
 adb shell pm revoke "$PKG" android.permission.WRITE_SECURE_SETTINGS >/dev/null 2>&1 || true
 adb shell appops set "$PKG" SYSTEM_ALERT_WINDOW default >/dev/null 2>&1 || true
 adb shell appops set "$PKG" REQUEST_INSTALL_PACKAGES default >/dev/null 2>&1 || true
@@ -37,6 +45,20 @@ if [ -z "$REST" ] || [ "$REST" = null ]; then
 else
   adb shell settings put secure enabled_accessibility_services "'$REST'"
 fi
+# TCL: put back what the TV opened at power-on before install.sh made it Aerial.
+BOOT_APP=$(adb shell settings get global aerial_boot_app_componentname | tr -d '\r')
+if [ -n "$BOOT_APP" ] && [ "$BOOT_APP" != null ]; then
+  BOOT_MODE=$(adb shell settings get global aerial_boot_app_mode | tr -d '\r')
+  for pair in "boot_app_componentname:$BOOT_APP" "boot_app_mode:$BOOT_MODE"; do
+    key=${pair%%:*} value=${pair#*:}
+    case "$value" in none|null|"") adb shell settings put system "$key" "''" >/dev/null ;;
+      *) adb shell settings put system "$key" "$value" >/dev/null ;; esac
+  done
+  adb shell settings delete global aerial_boot_app_componentname >/dev/null
+  adb shell settings delete global aerial_boot_app_mode >/dev/null
+elif [ "$(adb shell settings get system boot_app_componentname | tr -d '\r')" = "$PKG/.MainActivity" ]; then
+  adb shell settings put system boot_app_componentname "''" >/dev/null
+fi
 # Hisense VIDAA: put back the launcher install.sh replaced in persist.vt.use_home_pkg.
 VT_HOME=$(adb shell settings get global aerial_vt_home_pkg | tr -d '\r')
 if [ -n "$VT_HOME" ] && [ "$VT_HOME" != null ]; then
@@ -49,6 +71,14 @@ elif [ "$(adb shell getprop persist.vt.use_home_pkg | tr -d '\r')" = "$PKG" ] &&
   adb shell setprop persist.vt.use_home_pkg com.jamdeo.tv.vod
 fi
 adb shell cmd role remove-role-holder --user 0 android.app.role.HOME "$PKG" >/dev/null 2>&1 || true
+# Xiaomi where an older install made Aerial the default Home and the firmware took it: PatchWall then
+# runs outside the home stack and the short press of the power key no longer sleeps the TV (#848).
+# Home goes back to PatchWall; the fix takes a reboot.
+if adb shell pm path com.mitv.tvhome 2>/dev/null | grep -q package: &&
+   adb shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME -c android.intent.category.DEFAULT 2>/dev/null | tail -n 1 | grep -q "^$PKG/"; then
+  adb shell cmd package set-home-activity --user 0 com.mitv.tvhome/.MainActivityUserMode >/dev/null 2>&1 &&
+    echo "Xiaomi: Home is PatchWall again; restart the TV once."
+fi
 
 # Aerial Lite (Android 4.x) takes over only as the home app the owner chose; nothing else to undo.
 LITE=app.orchard.tv.lite

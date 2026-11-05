@@ -56,6 +56,10 @@ object GuardSetup {
 
     private const val KEY_OWN_SCREENSAVER = "own_screensaver"
     private const val KEY_HOME_IN_FRONT = "home_in_front"
+    private const val KEY_HOME_IN_FRONT_AT = "home_in_front_at"
+    private const val KEY_HOME_IN_FRONT_BOOT = "home_in_front_boot"
+    private const val KEY_STOCK_HOME_AT = "stock_home_at"
+    private const val KEY_STOCK_HOME_BOOT = "stock_home_boot"
     private const val KEY_INSTALLER_OPENED = "installer_opened_at"
     private const val KEY_SCREENSAVER_SWITCHED_OFF = "screensaver_switched_off"
     private const val KEY_SCREENSAVER_ENABLED = "screensaver_enabled"
@@ -130,7 +134,55 @@ object GuardSetup {
      * and whatever the viewer sees now was uncovered rather than chosen.
      */
     fun setHomeInFront(context: Context, inFront: Boolean) =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_HOME_IN_FRONT, inFront).apply()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_HOME_IN_FRONT, inFront)
+            .putLong(KEY_HOME_IN_FRONT_AT, SystemClock.elapsedRealtime())
+            .putLong(KEY_HOME_IN_FRONT_BOOT, System.currentTimeMillis() - SystemClock.elapsedRealtime()).apply()
+
+    /**
+     * [wasHomeInFront], when it was written in this boot; null when it was not (a power-on, or a
+     * clock set since then). Tells a guard bound at boot from one bound after the firmware killed
+     * Aerial while the viewer was in an app.
+     */
+    fun homeInFrontThisBoot(context: Context): Boolean? {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val at = prefs.getLong(KEY_HOME_IN_FRONT_AT, -1L)
+        val boot = prefs.getLong(KEY_HOME_IN_FRONT_BOOT, 0L)
+        val bootNow = System.currentTimeMillis() - SystemClock.elapsedRealtime()
+        if (at !in 0..SystemClock.elapsedRealtime() || kotlin.math.abs(boot - bootNow) > 2 * 60 * 1000L) return null
+        return prefs.getBoolean(KEY_HOME_IN_FRONT, false)
+    }
+
+    /**
+     * The guard saw a stock launcher's home come to the front; kept on disk, as the firmware may
+     * stop Aerial a moment later (see [stockHomeSinceHomeLeft]).
+     */
+    fun noteStockHomeInFront(context: Context) =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putLong(KEY_STOCK_HOME_AT, SystemClock.elapsedRealtime())
+            .putLong(KEY_STOCK_HOME_BOOT, System.currentTimeMillis() - SystemClock.elapsedRealtime()).apply()
+
+    /**
+     * Whether, in this boot, a stock launcher's home came to the front after Aerial's Home last left
+     * it. Xiaomi MiTV-MTEQ0 (Android 10) pushed PatchWall back over Aerial 40 s after power-on and
+     * stopped Aerial 2 s later; revived, the guard read "Home was not in front when Aerial died" as
+     * an app the viewer had opened and left PatchWall there (issue #1047, the reporter's boot log).
+     */
+    fun stockHomeSinceHomeLeft(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val at = prefs.getLong(KEY_STOCK_HOME_AT, -1L)
+        val bootNow = System.currentTimeMillis() - SystemClock.elapsedRealtime()
+        if (at !in 0..SystemClock.elapsedRealtime() || kotlin.math.abs(prefs.getLong(KEY_STOCK_HOME_BOOT, 0L) - bootNow) > 2 * 60 * 1000L) return false
+        return at >= prefs.getLong(KEY_HOME_IN_FRONT_AT, -1L)
+    }
+
+    /** Whether the guard saw a stock launcher's home come to the front in this boot within the last [ms]. */
+    fun stockHomeSeenWithin(context: Context, ms: Long): Boolean {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val at = prefs.getLong(KEY_STOCK_HOME_AT, -1L)
+        val bootNow = System.currentTimeMillis() - SystemClock.elapsedRealtime()
+        if (at !in 0..SystemClock.elapsedRealtime() || kotlin.math.abs(prefs.getLong(KEY_STOCK_HOME_BOOT, 0L) - bootNow) > 2 * 60 * 1000L) return false
+        return SystemClock.elapsedRealtime() - at < ms
+    }
 
     fun wasHomeInFront(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_HOME_IN_FRONT, false)
@@ -241,10 +293,14 @@ object GuardSetup {
      * minutes after a boot, and once: that is when the setting can lie; a TV used over USB
      * debugging also has the port closed, by choice. Up to Android 10: from 11 network ADB is
      * mostly wireless debugging on a port of its own, 5555 is closed by design, and switching
-     * ADB off ends wireless debugging too.
+     * ADB off ends wireless debugging too. From Android 6: on Xiaomi Mi TV 3 (MiTV3_48, Android
+     * 5.0.1) the walk through 0 stopped adbd in TCP mode for good, and ADB could not be reached
+     * again until keep_adb was switched off (issue #1099, the reporter's agent).
      */
     private fun ensureAdbListening(context: Context) {
-        if (adbDancing || adbDanced || Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) return
+        if (adbDancing || adbDanced || Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ||
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+        ) return
         if (SystemClock.elapsedRealtime() > ADB_BOOT_WINDOW_MS) return
         Thread {
             if (adbdListens(adbProbePort)) return@Thread
@@ -459,22 +515,40 @@ object GuardSetup {
     /**
      * A persisted component override survives an APK update. On Skyworth 8N312_H5D the boot
      * receiver was disabled even though the manifest enables it. Android 8's shell cannot
-     * change another app's component, but the owning app can clear its own override. Only do
+     * change another app's component, but the owning app can clear its own override. Vidda's
+     * startup manager also disables ConfigReceiver (V3K_PRO, Android 11), preventing even the
+     * owner's protected ADB configuration broadcasts from being delivered. Only do
      * so after the owner has granted the ADB takeover permission, as for the guard itself.
      */
-    private fun restoreBootReceiver(context: Context) {
+    private fun restoreReceivers(context: Context) {
+        restoreReceiversNow(context)
+        // Vidda's startup manager disables them again about 2 s after a wake, after the screen-on
+        // and onStart that come here had looked; only the notification listener's later rebind
+        // found them, and that not on every wake (Vidda 75E5K, MT9653, Android 11, issue #1181,
+        // the reporter's timeline). Look again once the firmware is done.
+        val app = context.applicationContext
+        receiverRecheck.removeCallbacksAndMessages(null)
+        for (delay in RECEIVER_RECHECK_MS) receiverRecheck.postDelayed({ restoreReceiversNow(app) }, delay)
+    }
+
+    private val receiverRecheck by lazy { Handler(Looper.getMainLooper()) }
+    private val RECEIVER_RECHECK_MS = longArrayOf(5_000L, 15_000L)
+
+    private fun restoreReceiversNow(context: Context) {
         val pm = context.packageManager
-        val component = ComponentName(context, BootReceiver::class.java)
-        runCatching {
-            val state = pm.getComponentEnabledSetting(component)
-            if (state == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT ||
-                state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) return
-            pm.setComponentEnabledSetting(
-                component, PackageManager.COMPONENT_ENABLED_STATE_DEFAULT, PackageManager.DONT_KILL_APP,
-            )
-            DiagLog.i("revival: cleared disabled BootReceiver override (was $state)")
-        }.onFailure {
-            DiagLog.e("revival: could not restore BootReceiver", it)
+        for (receiver in listOf(BootReceiver::class.java, ConfigReceiver::class.java)) {
+            val component = ComponentName(context, receiver)
+            runCatching {
+                val state = pm.getComponentEnabledSetting(component)
+                if (state == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT ||
+                    state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) return@runCatching
+                pm.setComponentEnabledSetting(
+                    component, PackageManager.COMPONENT_ENABLED_STATE_DEFAULT, PackageManager.DONT_KILL_APP,
+                )
+                DiagLog.i("revival: cleared disabled ${receiver.simpleName} override (was $state)")
+            }.onFailure {
+                DiagLog.e("revival: could not restore ${receiver.simpleName}", it)
+            }
         }
     }
 
@@ -482,7 +556,7 @@ object GuardSetup {
     fun ensureEnabled(context: Context): Boolean {
         ensureAdb(context)
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_SECURE_SETTINGS) != PackageManager.PERMISSION_GRANTED) return false
-        restoreBootReceiver(context)
+        restoreReceivers(context)
         keepScreensaver(context)
         RevivalSync.ensure(context)
         if (standingOut(context)) { watchScreenOn(context); return false }
