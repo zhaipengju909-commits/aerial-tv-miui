@@ -19,8 +19,8 @@ android {
         // Android 4.0.
         minSdk = 14
         targetSdk = 34
-        versionCode = 22
-        versionName = "1.20"
+        versionCode = 25
+        versionName = "1.23"
     }
 
     // Signed with the same key as Aerial (see app/build.gradle.kts and docs/HANDOFF.md).
@@ -90,6 +90,7 @@ val copySources by tasks.registering(Copy::class) {
     from(rootProject.file("app/src/main/java/app/orchard/tv/wallpaper/ScreensaverVideos.kt"))
     from(rootProject.file("app/src/main/java/app/orchard/tv/system/MitvPanel.kt"))
     from(rootProject.file("app/src/main/java/app/orchard/tv/system/DeviceProfile.kt"))
+    from(rootProject.file("app/src/main/java/app/orchard/tv/system/OutputDevice.kt"))
     into(sharedSources.map { it.dir("app/orchard/tv/lite") })
     // Into Lite's package; Compose's state and AndroidX's prefs.edit {} come from Lite's Shims.kt.
     filter { line ->

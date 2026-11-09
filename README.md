@@ -220,15 +220,19 @@ curl -fsSL https://aerial.qust.me/install.sh | TV=192.168.1.20 bash -s restore
 | 小米（峰米） | Ultraman 系列投影仪 | Android 9 | ✅（[笔记](docs/devices/xiaomi-ultraman-projector.md)） |
 | TCL | MT5879 国行、98T8H | Android 11 | ✅ 日常使用（[笔记](docs/devices/tcl-mt5879-cn.md)；98T8H 见 [#803](https://github.com/pengchujin/aerial-tv/issues/803)） |
 | TCL | Q9L Pro | Android 14 | ⚠️ 只能 USB 线连 adb；要在电视管家里允许 Aerial 自启；信号源 1.77 起能切（[#792](https://github.com/pengchujin/aerial-tv/issues/792)） |
+| TCL | 85T7L Pro（MT9655_4K_CN） | Android 14 | ⚠️ 只能 USB 线连 adb（无线 adb 只在 IPv6 上监听，连不上）；standard 装不上，guard 版把 `boot_app_componentname` 设成 Aerial 后重启进 Aerial，守护保持（[#1398](https://github.com/pengchujin/aerial-tv/issues/1398)） |
 | TCL | 65V8E（tc8000 ay30a2） | Android 11 | ✅ 断电开机先显示原桌面 6–8 秒（[#1137](https://github.com/pengchujin/aerial-tv/issues/1137)） |
 | 雷鸟 | 75S78A Plus（FFALCON T966D5） | Android 14 | ❌ 固件约每分钟清掉无障碍，主页键接管不了；`boot_app_componentname` 能让开机进 Aerial（[笔记](docs/devices/ffalcon-t966d5.md)） |
 | 雷鸟 | 鹤 6 2027 款 55 英寸（T966D5 / AU01） | Android 14 | ⚠️ guard 版，把 `boot_app_componentname` 设成 Aerial 后重启进 Aerial，守护在；只试过一次重启（[#1185](https://github.com/pengchujin/aerial-tv/issues/1185)） |
 | TCL | 75V2（m7221） | Android 8 | ✅ 免 root，开机直达（[笔记](docs/devices/tcl-m7221-cn.md)） |
+| TCL | 55Q9（X5，m7221） | Android 8 | ✅ guard 版，主页键、重启、待机、音量亮度、屏保、手机页都正常；设置里 ADB 开关是隐藏的，要用遥控器打开（[#1371](https://github.com/pengchujin/aerial-tv/issues/1371)） |
 | TCL / 雷鸟 | 60A730U、55V2 Pro（x32a0）、65Q10E 与鹤 6（m7642）、75S365C、75Q10L | Android 5.1–14 | ✅ 60A730U 只能装 guard 版；55V2 Pro 先 `setprop persist.tcl.debug.installapk 1` 才能 adb 安装（[#620](https://github.com/pengchujin/aerial-tv/issues/620)） |
 | 雷鸟 | FF55S515D-E674（tcl_m7642） | Android 9 | ✅ 多屏互动安装 guard，主页键可接管；重启亮屏后先出原桌面再切入 Aerial，待机唤醒偶尔同样短暂切换（[实测与限制](docs/devices/ffalcon-55s515d.md)） |
 | 雷鸟 | 55S595C Ultra、鹤 6 2025 Ultra | Android 11+ | ❌ 能装，接管不了主页键（[笔记](docs/devices/tcl-mt9655-cn.md)） |
 | 索尼 | A80J 国行、BRAVIA VH1 | Android 10 / 12 | ✅ |
+| 索尼 | BRAVIA BF1 国行（BRAVIA 3，当贝系统） | Android 12 | ✅ 亮度要在电视设置里调（[#1355](https://github.com/pengchujin/aerial-tv/issues/1355)） |
 | 索尼 | BRAVIA 4K VH2 | 未说 | ✅（[#1193](https://github.com/pengchujin/aerial-tv/issues/1193)） |
+| 索尼 | KD-55X8000E 国行（BRAVIA 4K GB） | Android 9 | ✅ 固件锁死主页键，Agent 在这台电视上写 `filterHomeAlways` 后主页键回 Aerial；开机先露原桌面（[#1351](https://github.com/pengchujin/aerial-tv/issues/1351)） |
 | 索尼 | KD55X7000D 国行 | Android 8 | ✅ 亮度要在电视设置里调（[#757](https://github.com/pengchujin/aerial-tv/issues/757)） |
 | 创维 / 酷开 | K3 Pro、75A7D | Android 11 | ✅ 75A7D 的信号源 1.45 起能用；开机先出酷开桌面 3–6 秒，报告人改固件属性后开机直达（[#894](https://github.com/pengchujin/aerial-tv/issues/894)） |
 | 创维 / 酷开 | 65G60、8R134 / 8R145、aigc 系（C10 投影、P60、7T863） | Android 8–11 | ⚠️ 开机先进酷开桌面，或被系统清理后要等 20–30 秒（[笔记](docs/devices/skyworth-coocaa.md)） |
@@ -237,29 +241,38 @@ curl -fsSL https://aerial.qust.me/install.sh | TV=192.168.1.20 bash -s restore
 | 创维 / 酷开 | 8H57_H5 | Android 5.1 | ⚠️ 开机先转圈十几秒才进 Aerial（[#785](https://github.com/pengchujin/aerial-tv/issues/785)） |
 | 创维 | 1AA46_D4（T963） | Android 9 | ✅（[#796](https://github.com/pengchujin/aerial-tv/issues/796)） |
 | 创维 | 43H30（1MC02，MT5862） | Android 9 | ✅ 冷开机先出原厂桌面 1–2 秒；背光只能在电视自己的图像设置里调（[#1192](https://github.com/pengchujin/aerial-tv/issues/1192)） |
-| 创维 | 7T641、7T634_P3H、75A6E、55A5F Pro（8R702）、8R721_A6FP | Android 13 | ❌ 黑屏，或拿不到焦点被系统结束（[#864](https://github.com/pengchujin/aerial-tv/issues/864)、[#839](https://github.com/pengchujin/aerial-tv/issues/839)） |
+| 创维 | 55A5F Pro（8R702_A5FP） | Android 13 | ✅ 要用 standard 版、按主页键的方式打开（guard 版在这台黑屏）（[#1349](https://github.com/pengchujin/aerial-tv/issues/1349)） |
+| 创维 / 酷开 | K3（7T634_P3H） | Android 13 | ⚠️ 1.87 standard 显示、实体 Home 和音量减短按正常；需放行自启动和后台保留；HDMI 接入时仅 Aerial 的重启测试仍停在输入画面，待机未测（[笔记](docs/devices/skyworth-coocaa.md)、[#864](https://github.com/pengchujin/aerial-tv/issues/864)） |
+| 创维 | 7T641、75A6E、8R721_A6FP | Android 13 | ❌ 黑屏，或拿不到焦点被系统结束（[#839](https://github.com/pengchujin/aerial-tv/issues/839)） |
 | 创维 | 小湃 P3（Q5001 / cupid-p2）盒子 | Android 10 | ⚠️ 要改包名才能接管 HOME；开机广播全被拦（[笔记](docs/devices/skyworth-p3-box.md)） |
 | 松下 | TH-55HX560C（创维代工） | Android 8 | ⚠️ 信号源列不出来 |
 | 康佳 | KKTV U86V9、2861 | Android 9 | ✅ U86V9 亮度调不了（[笔记](docs/devices/konka-kktv-u86v9.md)） |
 | 海尔 | L55F5（LRM9633，AliOS） | Android 13 | ✅ guard 版主页键、待机唤醒（[#1131](https://github.com/pengchujin/aerial-tv/issues/1131)） |
 | 康佳 | Android TV 551（Hi3751V551） | Android 5.1.1 | ✅ 在康佳「设置 → 通用 → 快捷 → 开机直达」里选 Aerial 后开机直达，主页键由守护接管；固件没有 `cmd` 命令（[#1089](https://github.com/pengchujin/aerial-tv/issues/1089)） |
-| 乐视 | 超4 X55（f608） | Android 6 | ✅ 安装、开机自启、主页键接管（[#510](https://github.com/pengchujin/aerial-tv/issues/510)） |
+| 乐视 | 超4 X55（f608） | Android 6 | ✅ 安装、开机自启、主页键接管；切到别的应用约 4 秒后被强停、返回先回原桌面约 4 秒；开机有固件原生广告（[笔记](docs/devices/letv-x4-55.md)、[#510](https://github.com/pengchujin/aerial-tv/issues/510)） |
 | 乐视 | 超3 X65（X65-168CQ） | Android 5.0.1 | ⚠️ 能装能显示；按主页键时系统会强杀第三方桌面，接管不稳定（[笔记](docs/devices/letv-x3-65.md)） |
 | 海信 / Vidda | VIDAA 各型号 | Android 5–14 | ⚠️ 主页键能接管，开机多数先进聚好看；VIDAA C1 投影接管不了（[笔记](docs/devices/hisense-vidaa.md)） |
 | 海信 | 65E52D | Android 8 | ✅ 开机直接进 Aerial（[#672](https://github.com/pengchujin/aerial-tv/issues/672)） |
 | 海信 | 75E3F（VIDAA_TV，n62016） | Android 9 | ✅ 开机直接进 Aerial（[#847](https://github.com/pengchujin/aerial-tv/issues/847)） |
 | 海信 | E5Q Pro | Android 11 | ✅（[#790](https://github.com/pengchujin/aerial-tv/issues/790)） |
+| 海信 / Vidda | M2 Pro 高亮版（VIDAA_TV，VL5R-PRO，MT9653） | Android 11 | ✅ 开机直接进 Aerial；激光光源的亮度走 0–10 档，控制中心这一行能真调（[笔记](docs/devices/hisense-vidaa.md)） |
 | 海信 | 85U7G-PRO（MT9652） | Android 9 | ✅ APK 装完第一次按主页键选 Aerial、「始终」，开机直接进 Aerial，不用 ADB（[#886](https://github.com/pengchujin/aerial-tv/issues/886)） |
 | 海信 | VIDAA_TV（MSD6A348） | Android 4.4 | ✅ Aerial Lite，U 盘安装，主页键选「始终」即可；亮度调不了（[#769](https://github.com/pengchujin/aerial-tv/issues/769)） |
 | 海信 | LED47K600X3D（VIDAA_TV，MT5880） | Android 4.0.4 | ⚠️ Aerial Lite 能装能用，开机直接进；遥控器的主页、APP、VOD 键被固件走私有通道拉起自家界面，Aerial 接不到（[#913](https://github.com/pengchujin/aerial-tv/issues/913)） |
 | 海信 | VIDAA_TV（MT9603 / mt5873） | Android 11 | ✅ 开机、主页键、HDMI、待机唤醒都是 Aerial（[#1266](https://github.com/pengchujin/aerial-tv/issues/1266)） |
+| 海信 | VIDAA_TV（HZ55E3D-J，Hi3751V551） | Android 7 | ✅ U 盘装 standard 版可用（[#1298](https://github.com/pengchujin/aerial-tv/issues/1298)） |
+| Vidda | 65V1R-Pro | Android 14 | ✅ 主页键、开机、待机、信号源、亮度、屏保都正常（[#1295](https://github.com/pengchujin/aerial-tv/issues/1295)） |
+| 小米 | MiTV-MTTP0（低内存） | Android 9 | ✅ 主页键、开机、待机、信号源通过；内存紧时回 Aerial 要几秒（[#1285](https://github.com/pengchujin/aerial-tv/issues/1285)） |
 | 夏普 | LCD-50SU671A | Android 6 | ✅ 要用 QuickShortcutMaker 打开 ADB |
 | 长虹 | CHiQ 43Q5T（ZLS70Hi5） | — | ❌ ADB 连上但不弹授权框，设置里没有无障碍入口，接管不了主页键；U 盘装上可以当普通 App 用（[#1262](https://github.com/pengchujin/aerial-tv/issues/1262)） |
+| 长虹 | 65D7H Ultra（MT9655） | Android 14 | ⚠️ ADB 不弹授权框；报告人用长虹自己的系统接口把 Aerial 设成默认桌面，主页键、待机唤醒正常；要在电视管家里允许 Aerial 后台运行，否则按返回会停在长虹桌面（[#1409](https://github.com/pengchujin/aerial-tv/issues/1409)） |
 | OPPO | K9 | Android 9 | ⚠️ 要改包名才能装（[笔记](docs/devices/oppo-coloros-tv.md)） |
 | 极米 | Z9X 4K 高亮版（goat_elegant） | Android 13 | ⚠️ 1.76 有限实测：初次显示、UID app-op 与重启前台恢复；启动画面和待机仍待验（[笔记](docs/devices/xgimi-z9x-4k.md)） |
 | 极米 | Z7X、m7642 | Android 9 | ✅ Z7X 要用第三方工具打开 ADB（[笔记](docs/devices/xgimi-z7x.md)） |
 | 极米 | 神灯 L1（m7642，pig_chivalrous） | Android 9 | ✅ 默认桌面开机后会丢，报告人的双规则办法见[笔记](docs/devices/xgimi-z7x.md)（[#767](https://github.com/pengchujin/aerial-tv/issues/767)） |
-| 极米 | Z6X 第四代（XK03U / ironman / m7221） | Android 8 | ⚠️ HDMI1 列表与切换已实测；未测视频输出（[笔记](docs/devices/xgimi-xk03u-android8.md)） |
+| 极米 | H3S、AG111（Product_ym01，m7642，pig_chivalrous） | Android 9 | ✅ standard 版用[笔记](docs/devices/xgimi-z7x.md)里的双规则办法开机直接进；guard 版重启约 1 分钟后进 Aerial（[#1336](https://github.com/pengchujin/aerial-tv/issues/1336)） |
+| 极米 | H5（AG122，m7642，pig_chivalrous，固件 xgimi02292304） | Android 9 | ⚠️ 用安装命令装完后重启会黑屏（默认桌面记录被固件丢掉、开机卡住），ADB 打开一次极米桌面能恢复；报告人只留不带 DEFAULT 的规则加守护能开机进 Aerial（[笔记](docs/devices/xgimi-z7x.md)、[#1357](https://github.com/pengchujin/aerial-tv/issues/1357)） |
+| 极米 | Z6X 第四代（XK03U / ironman / m7221） | Android 8 | ⚠️ HDMI1 列表与切换已实测，未测视频输出；2GB 机型后台约 15–45 秒被杀、开机默认桌面被改回极米（[笔记](docs/devices/xgimi-xk03u-android8.md)） |
 | 极米 | H3、m7221 | Android 8 | ✅ 要用第三方工具打开 ADB；开机和屏保与 Z7X 一致（[笔记](docs/devices/xgimi-h3.md)） |
 | 大眼橙 | X7、X7D 投影仪 | Android 9 / 5.1 | ✅ HDMI 里按主页键可以回到 Apple TV 主屏幕（[笔记](docs/devices/obe-x7.md)） |
 | 大眼橙 | OBE_R3Ultra 高亮版（投影仪，MT5879） | Android 11 | ✅ 开发者选项里只有「USB 调试」，打开后 adbd 直接监听 5555；按主页键先落固件的优酷桌面，约 13 秒后由守护切回（[笔记](docs/devices/obe-r3-ultra.md)） |
