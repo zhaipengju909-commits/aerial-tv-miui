@@ -745,7 +745,7 @@ internal fun fileFramesJam(context: android.content.Context): Boolean {
  */
 internal fun filmGlassReport(context: android.content.Context): String {
     FilmFrames.load(context)
-    return "copy=${pixelCopy ?: "untried"} copy_slow=$copySlow tcl_extractor=${FilmFrames.tclExtractor(context)} " +
+    return "copy=${pixelCopy ?: "untried"} copy_slow=$copySlow copy_crashed=${FilmFrames.copyCrashed} tcl_extractor=${FilmFrames.tclExtractor(context)} " +
         "file_stuck=${FileFramesStuck.now(context)} glassless=${Wallpapers.filmGlassless}"
 }
 
@@ -789,7 +789,7 @@ private const val SAVER_COVERS_MS = 1_400L
  * The longest the film holds its decoder past Home's pause, stopped on its frame, for that frame
  * to become the picture: the key frame took 0.96-1.44 s with Xiaomi's settings opening (MiTV-MFTR0).
  */
-private const val LEAVE_FRAME_MS = 2_500L
+internal const val LEAVE_FRAME_MS = 2_500L
 
 /**
  * Under a screensaver in another format (saverPictures): how often a picture of its film is made,
@@ -886,12 +886,23 @@ private suspend fun captureOnce(view: SurfaceView, w: Int = view.width, h: Int =
     // 4K film held it 0.5-1 s (TCL MT5879), and the keys pressed meanwhile all landed at once:
     // a Down that stopped the film moved focus down several rows.
     val started = android.os.SystemClock.elapsedRealtime()
-    val result = withContext(Dispatchers.IO) {
-        suspendCancellableCoroutine { done ->
-            runCatching {
-                PixelCopy.request(surface, bitmap, { done.resume(it) }, copyCallbacks)
-            }.onFailure { done.resume(-1) }
+    val result: Int = withContext(Dispatchers.IO) {
+        // A copy that once took the whole process down is not asked again (FilmFrames.copyCrashed).
+        FilmFrames.load(view.context)
+        if (FilmFrames.copyCrashed) return@withContext null
+        FilmFrames.copyStarting()
+        try {
+            suspendCancellableCoroutine<Int> { done ->
+                runCatching {
+                    PixelCopy.request(surface, bitmap, { done.resume(it) }, copyCallbacks)
+                }.onFailure { done.resume(-1) }
+            }
+        } finally {
+            FilmFrames.copyEnded()
         }
+    } ?: run {
+        pixelCopy = false
+        return null
     }
     // The copy is made on the render thread, which the main thread waits on to draw: asked from
     // another thread, a 4K copy still held keys up 0.6 s (TCL MT5879). A copy this slow is the
@@ -1073,10 +1084,11 @@ private class FrameReader(private val context: android.content.Context) {
         val mmr = open(url, ranged = urlRefused) ?: run {
             // TCL x32a0 (Android 9): the retriever fails at once on Apple's https address that
             // ExoPlayer plays from (issue #567); fetch the file in the app and hand it over.
-            if (urlRefused || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return null
+            if (urlRefused || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return null.also { openFailed() }
             urlRefused = true
-            open(url, ranged = true) ?: return null
+            open(url, ranged = true) ?: return null.also { openFailed() }
         }
+        openFailures = 0
         DiagLog.i("wallpaper film file opened${if (urlRefused) " through the app" else ""} in ${android.os.SystemClock.elapsedRealtime() - started} ms")
         // Left behind while it opened: this one goes too, as nothing will use it.
         if (w.abandoned) {
@@ -1086,6 +1098,22 @@ private class FrameReader(private val context: android.content.Context) {
         w.retriever = mmr
         w.openFor = id
         return mmr
+    }
+
+    /** The film's file not opened either way, this many times in a row. */
+    @Volatile private var openFailures = 0
+
+    /**
+     * Neither way opens the file, twice running, while the film itself plays from it: the retriever
+     * will not read it here. TCL sugarcane (MStar m7221, Android 8.0) refused both with a
+     * RuntimeException at every stop, each try 0.2-7.6 s of the TV's time, and the picture fell
+     * back to the last one every time (issue #1456). For the rest of the process the frames are
+     * read and decoded in the app instead, as where the file is shut (fileFramesShut).
+     */
+    private fun openFailed() {
+        if (++openFailures < 2 || FilmFrames.retrieverRefused) return
+        FilmFrames.refuseRetriever()
+        DiagLog.i("wallpaper film file: the retriever opened it neither way, twice running; frames decoded in the app from now on")
     }
 
     private fun open(url: String, ranged: Boolean): MediaMetadataRetriever? {
@@ -1179,11 +1207,50 @@ private object FilmFrames {
         if (app != null) return
         val c = context.applicationContext
         app = c
-        if (prefs(c).getString(SLOW_KEY, null) == Build.FINGERPRINT) {
+        val prefs = prefs(c)
+        if (prefs.getString(SLOW_KEY, null) == Build.FINGERPRINT) {
             copySlow = true
             pixelCopy = false
         }
+        // A copy was under way when the last process ended: it died in the copy itself.
+        if (prefs.getString(COPYING_KEY, null) == Build.FINGERPRINT) {
+            prefs.edit().remove(COPYING_KEY).putString(CRASHED_KEY, Build.FINGERPRINT).commit()
+            DiagLog.i("wallpaper frame copy: the last process ended inside a copy; not copied again on this firmware")
+        }
+        if (prefs.getString(CRASHED_KEY, null) == Build.FINGERPRINT) {
+            copyCrashed = true
+            pixelCopy = false
+        }
         update()
+    }
+
+    /**
+     * Whether a PixelCopy of the film ended this process on this firmware: Hisense VIDAA_TV MTK9632
+     * (m7332, Android 9) crashes in its own YUV detiling (libstagefrighthw_yuv.so, SIGSEGV on the
+     * render thread) copying the film, after one copy that came back green; Aerial died every 30 s
+     * and Android put its guard's restart off for 4 hours (issue #1447). A native crash cannot be
+     * caught, so each copy is marked on disk while under way ([copyStarting]), and a mark found by
+     * the next process means it died there.
+     */
+    @Volatile var copyCrashed = false
+        private set
+
+    /** Whether the media server's retriever has opened the film's file neither way (FrameReader.openFailed), in this process. */
+    @Volatile var retrieverRefused = false
+        private set
+
+    fun refuseRetriever() {
+        retrieverRefused = true
+        android.os.Handler(android.os.Looper.getMainLooper()).post { update() }
+    }
+
+    /** Before a copy: written at once, as the process may not live to write anything after it. */
+    fun copyStarting() {
+        app?.let { prefs(it).edit().putString(COPYING_KEY, Build.FINGERPRINT).commit() }
+    }
+
+    fun copyEnded() {
+        app?.let { prefs(it).edit().remove(COPYING_KEY).apply() }
     }
 
     fun copyWasSlow() {
@@ -1212,7 +1279,11 @@ private object FilmFrames {
         val known = prefs.getString(TCL_KEY, null)
         val found = if (known?.substringBeforeLast('|') == Build.FINGERPRINT) known.endsWith("|true") else {
             val dirs = listOf("/apex/com.android.media/lib64", "/apex/com.android.media/lib", "/system/lib64", "/system/lib")
-            val libs = dirs.map { java.io.File("$it/extractors/libmp4extractor.so") }.filter { it.exists() }
+            // Extractors are plugins of their own from Android 9; before, they are built into
+            // libstagefright. Looked for only in the plugins, Android 6-8 found none and counted
+            // as TCL's, and a LeTV X4-55 (Android 6) read "no MP4 extractor found" (issue #1444).
+            val name = if (Build.VERSION.SDK_INT >= 28) "extractors/libmp4extractor.so" else "libstagefright.so"
+            val libs = dirs.map { java.io.File("$it/$name") }.filter { it.exists() }
             val tclFound = libs.isEmpty() || libs.any { lib -> runCatching { containsAscii(lib, "TclMPEG4Extractor") }.getOrDefault(true) }
             prefs.edit().putString(TCL_KEY, "${Build.FINGERPRINT}|$tclFound").apply()
             DiagLog.i("wallpaper film file: ${libs.joinToString { it.path }.ifEmpty { "no MP4 extractor found" }}, TCL's extractor $tclFound")
@@ -1228,7 +1299,10 @@ private object FilmFrames {
     // A new key: "copy_slow" also took slow copies that read black (captureOnce), so each TV tries
     // PixelCopy once more. Where it is truly slow (TCL MT5879) that is one more held copy, then kept.
     private const val SLOW_KEY = "copy_slow_read"
-    private const val TCL_KEY = "tcl_extractor"
+    private const val COPYING_KEY = "copy_under_way"
+    private const val CRASHED_KEY = "copy_crashed"
+    // A new key: before 1.94 Android 6-8 were read in the wrong place and kept as TCL's.
+    private const val TCL_KEY = "tcl_extractor_lib"
 }
 
 /**
@@ -1238,7 +1312,7 @@ private object FilmFrames {
  * (Wallpapers.filmGlassless).
  */
 private fun fileFramesShut(context: android.content.Context): Boolean =
-    (copySlow && FilmFrames.tclExtractor(context)) || FileFramesStuck.now(context)
+    (copySlow && FilmFrames.tclExtractor(context)) || FileFramesStuck.now(context) || FilmFrames.retrieverRefused
 
 /** Whether [file] holds the ASCII text [text], read in pieces. */
 private fun containsAscii(file: java.io.File, text: String): Boolean {
