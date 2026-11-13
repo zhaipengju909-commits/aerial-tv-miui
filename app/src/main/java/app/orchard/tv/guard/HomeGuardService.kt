@@ -837,6 +837,7 @@ class HomeGuardService : AccessibilityService() {
     override fun onServiceConnected() {
         instance = this
         unlockPending = !GuardSetup.isUserUnlocked(this)
+        if (GuardSetup.isUserUnlocked(this)) restoreStockVisit(this)
         // Both read credential storage: bound before unlock, the guard crashed here twice and the
         // system put off its restart for 30 min, so nothing took Home at boot (1.79 to 1.81: Redmi
         // Projector 4 mt5873, Android 13, issue #684; Formovie spiderman, Android 9, issue #1213;
@@ -1603,6 +1604,17 @@ class HomeGuardService : AccessibilityService() {
                 volumeStepDirection = if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP) 1 else -1
                 volumeStepPending = true
                 handler.postDelayed(volumeStepIfUnmoved, VOLUME_UNMOVED_MS)
+                // Held, such a press got one step and no more: Android makes no repeats for a key
+                // the filter keeps (TCL ak30a5, Android 9, issue #1499: a 6 s hold, one DOWN and
+                // one UP from the IR driver, one step; MiTV4-ANSM0, Android 6, issue #1498). Where
+                // the lifts of kept presses reach the filter, a held one steps on at Android's
+                // repeat pace until it comes up, as on TCL below.
+                if (stepKey && takenVolumeLiftSeen) {
+                    volumeRepeatDirection = volumeStepDirection
+                    volumeRepeatShowsUi = true
+                    volumeRepeatUntil = SystemClock.uptimeMillis() + VOLUME_REPEAT_MAX_MS
+                    handler.postDelayed(volumeRepeat, ViewConfiguration.getKeyRepeatTimeout().toLong())
+                }
             }
             volumeDownPassedAt = if (stepKey && !volumeKeyTaken) event.downTime else Long.MAX_VALUE
             if (movedFirst) {
@@ -1613,6 +1625,7 @@ class HomeGuardService : AccessibilityService() {
                     else -> 0
                 }
                 if (volumeRepeatDirection != 0 && (repeatsHeldVolume || takenVolumeLiftSeen)) {
+                    volumeRepeatShowsUi = false
                     volumeRepeatUntil = SystemClock.uptimeMillis() + VOLUME_REPEAT_MAX_MS
                     handler.postDelayed(volumeRepeat, ViewConfiguration.getKeyRepeatTimeout().toLong())
                 }
@@ -1657,7 +1670,10 @@ class HomeGuardService : AccessibilityService() {
         volumeStepPending = false
         if (volumeNow() != volumeStepFrom) return@Runnable
         DiagLog.i("guard: the volume did not move for a press not passed on; stepping it")
-        SystemProbe.adjustVolume(this, volumeStepDirection, fromKey = true)
+        // With the volume bar, as the key itself has it: the firmware did nothing with this press,
+        // so nothing else shows one. Without it the volume moved unseen (MiTV4-ANSM0, Android 6,
+        // issue #1498: "no volume window any more, only blind steps").
+        SystemProbe.adjustVolume(this, volumeStepDirection, fromKey = true, showUi = true)
         // Its own step is no change the firmware made: the next press must not look moved first.
         volumeSeen = volumeNow()
     }
@@ -1673,6 +1689,9 @@ class HomeGuardService : AccessibilityService() {
     private var takenVolumeLiftSeen = false
 
     private var volumeRepeatDirection = 0
+
+    /** Whether the held key's steps show the volume bar: the firmware's own did not act on it. */
+    private var volumeRepeatShowsUi = false
     private var volumeRepeatUntil = 0L
     private val volumeRepeat: Runnable = object : Runnable {
         override fun run() {
@@ -1680,7 +1699,7 @@ class HomeGuardService : AccessibilityService() {
                 Log.i(TAG, "volume key still not up after ${VOLUME_REPEAT_MAX_MS / 1000} s; no more steps")
                 return
             }
-            SystemProbe.adjustVolume(this@HomeGuardService, volumeRepeatDirection, fromKey = true)
+            SystemProbe.adjustVolume(this@HomeGuardService, volumeRepeatDirection, fromKey = true, showUi = volumeRepeatShowsUi)
             handler.postDelayed(this, ViewConfiguration.getKeyRepeatDelay().toLong())
         }
     }
@@ -1811,8 +1830,15 @@ class HomeGuardService : AccessibilityService() {
         // event names a RelativeLayout. The reporters asked for the key to be Home everywhere
         // (issue #808, events from the reporter's logcat): close the panel and bring Aerial back.
         // Not tried on that TV.
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.LOLLIPOP_MR1 && pkg == JAMDEO_LAUNCHER &&
-            cls == "android.widget.RelativeLayout" && pkg in stockHomes && !screenOff
+        // Android 6 VIDAA too (MSD6A648): the firmware maps the remote's Home to F12 and shows the
+        // same GlobalPanel (a full-screen system overlay, type 2014) for it, and VIDAA keys are not
+        // filtered (keysPassThrough), so every Home showed the panel for about 5 s and from Settings
+        // it stayed (issue #1505, the reporter's dumpsys and logcat). Not tried on that TV either.
+        // Not while the stock launcher was opened on purpose: from Aerial's tile it comes up with
+        // this panel, which was closed at once and the launcher with it (Hi3751V551, Android 5.1,
+        // issue #1502, the reporter's log: "opened on purpose", then "Jamdeo's panel").
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.M && pkg == JAMDEO_LAUNCHER && isJamdeoPanel(cls) &&
+            pkg in stockHomes && !screenOff && SystemClock.uptimeMillis() >= allowStockUntil
         ) {
             DiagLog.i("guard: Jamdeo's panel over ${before ?: "?"}; closing it and bringing Aerial back")
             performGlobalAction(GLOBAL_ACTION_BACK)
@@ -1937,6 +1963,15 @@ class HomeGuardService : AccessibilityService() {
     private fun isActivity(pkg: String, cls: String): Boolean = activityCache.getOrPut(pkg to cls) {
         runCatching { packageManager.getActivityInfo(android.content.ComponentName(pkg, cls), 0) }.isSuccess
     }
+
+    /**
+     * Jamdeo's GlobalPanel: a window of the launcher's process that is no activity of it. The
+     * Android 5.1 event named a RelativeLayout (issue #808); on Android 6 the panel's root view
+     * class was not in the report (#1505), so any view that is no activity or dialog counts.
+     */
+    private fun isJamdeoPanel(cls: String): Boolean =
+        cls == "android.widget.RelativeLayout" ||
+            (Build.VERSION.SDK_INT == Build.VERSION_CODES.M && !isActivity(JAMDEO_LAUNCHER, cls) && !cls.contains("Dialog"))
 
     /** True for packages with a launcher entry, i.e. apps rather than system overlays and dialogs. */
     private fun isApp(pkg: String): Boolean =
@@ -2230,6 +2265,7 @@ class HomeGuardService : AccessibilityService() {
         /** How far back to look for the front when no window has been seen; see frontByUsage. */
         private const val UNKNOWN_FRONT_LOOKBACK_MS = 6 * 60 * 60 * 1000L
         private const val DOUBLE_HOME_MS = 400L
+        private const val STOCK_VISIT_MS = 60 * 60 * 1000L
         /** Android's hold on app starts after Home (stopAppSwitches), with a margin. */
         private const val APP_SWITCH_HOLD_MS = 5_500L
         private const val PACKAGE_SETTLE_MS = 1000L
@@ -2637,17 +2673,39 @@ class HomeGuardService : AccessibilityService() {
         private var allowStockFrom = 0L
 
         private fun endStockVisit(why: String) {
+            visitContext?.let { GuardSetup.noteStockVisit(it, null) }
             if (allowStockUntil == 0L) return
             if (SystemClock.uptimeMillis() < allowStockUntil) DiagLog.i("guard: stock launcher visit over ($why)")
             allowStockUntil = 0L
         }
 
-        /** Lets the stock launcher stay in front until Aerial is back: the viewer opened it on purpose. */
-        fun allowStockLauncher() {
+        /** Where the visit is kept on disk (GuardSetup.noteStockVisit): the application context. */
+        @Volatile
+        private var visitContext: Context? = null
+
+        /**
+         * Lets the stock launcher stay in front until Aerial is back: the viewer opened it on purpose.
+         * Kept on disk too, for a guard revived in a new process (GuardSetup.noteStockVisit).
+         */
+        fun allowStockLauncher(context: Context? = null) {
             val now = SystemClock.uptimeMillis()
-            allowStockUntil = now + 60 * 60 * 1000L
+            allowStockUntil = now + STOCK_VISIT_MS
             allowStockFrom = now
+            (context?.applicationContext ?: instance?.applicationContext)?.let {
+                visitContext = it
+                GuardSetup.noteStockVisit(it, SystemClock.elapsedRealtime() + STOCK_VISIT_MS)
+            }
             DiagLog.i("guard: the stock launcher opened on purpose; leaving it in front")
+        }
+
+        /** The visit a guard before this process allowed, if it still runs; see allowStockLauncher. */
+        private fun restoreStockVisit(context: Context) {
+            visitContext = context.applicationContext
+            if (aerialResumed) return GuardSetup.noteStockVisit(context, null)
+            val left = GuardSetup.stockVisitLeftMs(context)
+            if (left <= 0L || SystemClock.uptimeMillis() < allowStockUntil) return
+            allowStockUntil = SystemClock.uptimeMillis() + left
+            DiagLog.i("guard: the stock launcher visit opened before Aerial was stopped still holds; leaving it in front")
         }
 
         /** The visit has not begun yet while the stock launcher's own start is still on screen. */
@@ -2667,9 +2725,12 @@ class HomeGuardService : AccessibilityService() {
         private var aerialPausedAt = Long.MIN_VALUE / 2
 
         /** Called when Aerial comes back to the front: the stock launcher is fair game again. */
-        fun onAerialResumed() {
+        fun onAerialResumed(context: Context) {
             aerialResumed = true
             aerialResumedAt = SystemClock.uptimeMillis()
+            // Back in Aerial, guard or not: a visit kept on disk is over.
+            visitContext = context.applicationContext
+            GuardSetup.noteStockVisit(context, null)
             val s = instance ?: return
             // Back in Aerial: an installer opened from Control Center was left without updating.
             GuardSetup.installerJustClosed(s)
