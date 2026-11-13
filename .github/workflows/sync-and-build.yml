@@ -1,0 +1,137 @@
+name: Sync Upstream & Build APK
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # 每天 UTC 02:00（北京时间 10:00）
+  workflow_dispatch:        # 也可手动触发
+
+permissions:
+  contents: write
+
+jobs:
+  sync-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Configure git identity
+        run: |
+          git config user.email "230658631+zhaipengju909-commits@users.noreply.github.com"
+          git config user.name "zhaipengju909-commits"
+
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/pengchujin/aerial-tv.git || true
+
+      - name: Fetch upstream
+        run: git fetch upstream
+
+      - name: Check if upstream has new version
+        id: version_check
+        run: |
+          UPSTREAM_VERSION=$(git show upstream/main:app/build.gradle.kts | grep 'versionName' | head -1 | sed 's/.*= *"\(.*\)".*/\1/')
+          CURRENT_VERSION=$(grep 'versionName' app/build.gradle.kts | head -1 | sed 's/.*= *"\(.*\)".*/\1/')
+          echo "upstream=$UPSTREAM_VERSION" >> "$GITHUB_OUTPUT"
+          echo "current=$CURRENT_VERSION"   >> "$GITHUB_OUTPUT"
+          if [ "$UPSTREAM_VERSION" = "$CURRENT_VERSION" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true"  >> "$GITHUB_OUTPUT"
+          fi
+          echo "Upstream: $UPSTREAM_VERSION  |  Current: $CURRENT_VERSION"
+
+      - name: Merge upstream main
+        if: steps.version_check.outputs.changed == 'true'
+        run: |
+          git merge upstream/main \
+            -X theirs \
+            --no-edit \
+            --allow-unrelated-histories \
+            -m "chore: sync upstream ${{ steps.version_check.outputs.upstream }}"
+
+      - name: Restore custom changes (applicationId property)
+        if: steps.version_check.outputs.changed == 'true'
+        run: |
+          # Ensure our launcherApplicationId property support is still present after merge.
+          # If the merge kept our version (-X theirs may have picked upstream's build.gradle),
+          # re-apply the custom fragment.
+          python3 - <<'PYEOF'
+          import re, pathlib
+          p = pathlib.Path("app/build.gradle.kts")
+          text = p.read_text()
+          if "launcherApplicationId" not in text:
+              # Insert our customisation after the `defaultConfig {` block opening
+              text = re.sub(
+                  r'(defaultConfig \{)',
+                  r'\1\n        val appId = (project.findProperty("launcherApplicationId") as String?) ?: "app.orchard.tv"\n        applicationId = appId\n        resValue("string", "revival_account_type", appId)',
+                  text, count=1
+              )
+              # Remove any hard-coded applicationId line that may now be duplicate
+              text = re.sub(r'\s*applicationId = "app\.orchard\.tv"\n', '\n', text)
+              p.write_text(text)
+              print("Restored launcherApplicationId custom change")
+          else:
+              print("launcherApplicationId already present — no action needed")
+          PYEOF
+
+      - name: Push merged branch
+        if: steps.version_check.outputs.changed == 'true'
+        run: git push origin main
+
+      - name: Decode keystore
+        run: |
+          mkdir -p local
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > local/aerial-release.jks
+
+      - name: Create signing.properties
+        run: |
+          cat > local/signing.properties <<EOF
+          storeFile=aerial-release.jks
+          storePassword=${{ secrets.STORE_PASSWORD }}
+          keyAlias=${{ secrets.KEY_ALIAS }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          EOF
+
+      - name: Grant execute permission to Gradle wrapper
+        run: chmod +x gradlew
+
+      - name: Build release APK
+        run: |
+          ./gradlew assembleStandardRelease \
+            "-PlauncherApplicationId=com.ts.launcher" \
+            --no-daemon
+
+      - name: Find built APK
+        id: find_apk
+        run: |
+          APK=$(find app/build/outputs/apk -name "*.apk" | head -1)
+          VERSION=${{ steps.version_check.outputs.upstream }}
+          DEST="aerial-${VERSION}-com.ts.launcher.apk"
+          cp "$APK" "$DEST"
+          echo "path=$DEST" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.find_apk.outputs.version }}
+          name: "Aerial TV ${{ steps.find_apk.outputs.version }} (com.ts.launcher)"
+          body: |
+            自动同步自上游 [pengchujin/aerial-tv](https://github.com/pengchujin/aerial-tv) v${{ steps.find_apk.outputs.version }}
+
+            **安装说明：**
+            - 包名：`com.ts.launcher`（Redmi X 2026 / HyperOS 白名单）
+            - 签名已使用 release key，可直接覆盖安装
+            - 首次安装或签名不同时需先卸载旧版本
+          files: ${{ steps.find_apk.outputs.path }}
+          token: ${{ secrets.GITHUB_TOKEN }}
