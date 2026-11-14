@@ -268,6 +268,10 @@ object SystemProbe {
             // com.android.settings (priority 1) over Hisense's own page, which declares it too and
             // is what the TV's System Settings tile opens (issue #1085, the reporter's adb).
             Intent(Settings.ACTION_SETTINGS).setComponent(ComponentName("com.android.tv.settings", "com.hisense.systemsettings.MainActivity")),
+            // LeTV Max4-55 (MStar, Android 6, Dangbei's slimmed firmware): ACTION_SETTINGS lands in
+            // AOSP's empty MainSettings; LeTV's own settings have no launcher entry and answer no
+            // settings action (the reporter opened them by component, issue #1528).
+            Intent(Intent.ACTION_MAIN).setComponent(ComponentName("com.stv.globalsetting", "com.stv.globalsetting.activity.SettingActivity")),
             Intent(Settings.ACTION_SETTINGS),
             // Konka Android TV 553 (Hi3751V553, Android 5.1.1) has neither of the above: its settings
             // are a second app, opened by component on the TV by the reporter (issue #918).
@@ -678,6 +682,13 @@ object SystemProbe {
         val mstar = Intent(MSTAR_SOURCE_INFO).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         if (runCatching { pm.resolveActivity(mstar, 0)?.activityInfo }.getOrNull()?.exported == true &&
             runCatching { context.startActivity(mstar) }.isSuccess
+        ) return true
+        // HiSilicon YunOS (喜瑞 HS350, bigfish, Android 9): TvInputManager lists the inputs, but
+        // nothing answers their passthrough intent; the system TVSource app's source list does
+        // (the reporter's agent opened it with this link, issue #1527). Only an exported one.
+        val yunos = Intent(Intent.ACTION_VIEW, Uri.parse("alliance://start_signal")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (runCatching { pm.resolveActivity(yunos, 0)?.activityInfo }.getOrNull()?.exported == true &&
+            runCatching { context.startActivity(yunos) }.isSuccess
         ) return true
         return false
     }
