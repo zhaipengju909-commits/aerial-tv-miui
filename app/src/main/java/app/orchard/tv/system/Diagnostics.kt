@@ -119,11 +119,11 @@ object Diagnostics {
         appendLine("Compiled    ${compiled(context)}; self compile ${app.orchard.tv.update.SelfCompile.diagnostics(context)}")
         appendLine("Frames      ${FrameStats.summary()}")
         appendLine("Settings    focus=${AerialSettings.focusStyle.key} one_row=${AerialSettings.oneRowHome} columns=${AerialSettings.homeColumns} peek=${AerialSettings.peekNextRow} names=${AerialSettings.showAllNames} plate=${AerialSettings.homePlate} boot_source=${AerialSettings.bootSource != null} boot_app=${AerialSettings.bootApp}")
-        appendLine("            clock_hours=${AerialSettings.clockHours.key} home_locked=${AerialSettings.homeLocked} photo_minutes=${AerialSettings.photoMinutes} cec_switch=${AerialSettings.cecSwitch} hidden_sources=${AerialSettings.hiddenSources.size} volume_fixed=${OutputDevice.volumeFixed(context)} playback_device=${OutputDevice.isPlaybackDevice()}")
+        appendLine("            clock_hours=${AerialSettings.clockHours.key} home_locked=${AerialSettings.homeLocked} photo_minutes=${AerialSettings.photoMinutes} cec_switch=${AerialSettings.cecSwitch} hidden_sources=${AerialSettings.hiddenSources.size} volume_fixed=${OutputDevice.volumeFixed(context)} volume_external=${SystemProbe.volume(context).external} playback_device=${OutputDevice.isPlaybackDevice()}")
         runCatching { app.orchard.tv.wallpaper.AerialStream.usage(context) }.getOrNull()?.let { (used, limit) ->
             appendLine("Aerials     quality=${AerialSettings.aerialQuality.key} films=${app.orchard.tv.wallpaper.AerialSet.films(context).joinToString(",") { it.id.take(8) }} cache=${used / 1_048_576}/${limit / 1_048_576} MB")
         }
-        appendLine("            wallpaper=${app.orchard.tv.wallpaper.Wallpapers.selectedId.substringBefore('/')} always_moves=${AerialSettings.wallpaperAlwaysMoves} quality=${AerialSettings.aerialQuality.key} weather=${AerialSettings.showWeather} saver_clock=${AerialSettings.screensaverClock}")
+        appendLine("            wallpaper=${app.orchard.tv.wallpaper.Wallpapers.selectedId.substringBefore('/')} always_moves=${AerialSettings.wallpaperAlwaysMoves} quality=${AerialSettings.aerialQuality.key} weather=${AerialSettings.showWeather} saver_clock=${AerialSettings.screensaverClock} saver_caption=${AerialSettings.screensaverCaption}")
         runCatching { app.orchard.tv.ui.home.filmGlassReport(context) }.getOrNull()?.let { appendLine("            film glass $it") }
         runCatching { app.orchard.tv.weather.Weather.diagnostics() }.getOrNull()?.let { appendLine("Weather     $it") }
         appendLine("```")
