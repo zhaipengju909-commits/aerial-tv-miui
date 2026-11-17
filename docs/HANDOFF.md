@@ -2,6 +2,24 @@
 
 写给接手 Aerial 的人或 AI。先读这份，再读 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [devices/](devices/)。
 
+## 现状（2026-11-17）
+
+- **2.0（versionCode 148），Lite 1.32（34），2026-11-17 发布**（[v2.0](https://github.com/pengchujin/aerial-tv/releases/tag/v2.0)）：屏保地点开关（#1583）和下面这轮巡检的全部修复，加上小米 keep_adb 修复。版本名用 2.0 而不是 1.100（1.100 看起来比 1.99 旧；`Updates.newer` 按数字逐段比，2.0 > 1.99）。官网已部署，三个包字节数和 Release 一致，version.txt = v2.0；给 #1580 #1588 #1599 #1584 #1569 #1583 贴了复测链接，PR #1587 发版后关闭。
+  - **keep_adb（户主的小米 MFTR0）**：这台的 `keep_adb` 早就变成 false（多半是 1.89–1.97 的 #1537 那个误判），所以每次唤醒固件关掉 ADB 后没人打开。另外这台待机时进程和守护绑定可能一直活着，唤醒时固件关 ADB 比 SCREEN_ON 先到，`screenOnAt` 还是上次亮屏，「亮屏多久」算成几小时，就会把它当成用户关的、结束 keep_adb。改成：守护记着屏幕已灭（`screenOff`）时，ADB 被关不算用户关的；`ensureAdb` 打开 ADB 时写 DiagLog（小米的 logcat 几分钟就被刷掉）。验证：装 2.0 后用 ConfigReceiver 重新打开户主这台的 keep_adb，`KEYCODE_SLEEP` 待机（这台待机时网络断开），户主遥控器开机：DiagLog `15:32:10 guard: ADB had been switched off; turned it back on (keep_adb)`，端口 5555 开着，keep_adb 仍是 true。注意这次唤醒走的是「待机被杀、复活」路径（`revival: ... guard unbound`），守护整段待机都绑着的那条路径这次没有走到。
+  - 两台回归：小米（install-multiple + 31.dm，speed-profile / install-dm）从小米设置按主页键 1 秒内回 Aerial，信号源列出 HDMI 1/2 等，按返回进屏保、按键退出；TCL（多屏互动推 148，确认焦点在「同意」，compile speed）主页键 2 秒内回、信号源键弹 TCL 面板。
+
+- **2026-11-17 全量巡检**（记录 `local/triage/2026-11-17-full.md`，回复 `replies-2026-11-17.py`）：332 issue / 67 PR，最后是用户发言的 35 个新条目逐个读过。main 上未发版的改动（都在 1.99 之后，和「屏保地点开关」一起发）：
+  - **#1580 信号源键**（飞利浦 TV838，MStar，安卓 6）：没有安卓信号源列表时，首页按遥控器信号源键和控制中心「信号源」按钮一样先 `openInputPicker`（固件面板），打不开才显示「信号源」页；`firmwareInputPanel`（TCL、酷开）不变。Lite 本来不接这个键，没改。
+  - **#1588 Lite 时钟**（安卓 4.4 盒子）：Lite 监听 `TIME_SET` / `TIMEZONE_CHANGED`，立刻刷新桌面、屏保和控制中心的时间；控制中心开着时每分钟刷新。完整版本来就听。
+  - **#1599 海信屏保**（75E3F，安卓 9）：系统屏保开始 3 秒内来自无设备（`deviceId` ≤ 0）的返回键不结束屏保；唤醒日志加设备号。注意：adb `input keyevent` 也是设备 -1，测屏保唤醒要等 3 秒再按。
+  - **#1584 当贝 Z1 Pro**：守护在新进程里绑定（启动 60 s 内、开机窗口外、不是刚升级）且 usage stats 说原桌面在前台时也接管，不当作唤醒（不开开机信号源）。
+  - **合 PR #1587**（sln162，本地 cherry-pick，作者保留）：宽查询（不带 DEFAULT）答 Aerial 时，收框那两段整段跳过（极米首选记录分裂态，#1569）。
+  - README 两份机型表更新极米 RS20 Pro Max（#1483）；机型笔记加当贝 Z1 Pro、海信屏保返回键、酷开 9S67_G30 / 85P7F 属性、新建 `tcl-ak30a5.md`。
+  - 验证：standard、guard 单测通过，Lite lint 通过。**TCL MT5879**（多屏互动推 guard 测试包 versionCode 147，uiautomator 确认焦点在「同意」再按确定，compile speed）：从 TCL 艺术鉴赏按主页键 1 秒内回 Aerial；首页按信号源键只弹 TCL 自己的面板；按返回 0.2 秒进航拍屏保、按键退出（screenrecord 逐帧看过）；Somnambulator 起系统屏保，1.2 秒时 `input keyevent BACK` 被忽略（日志 `Back from no device (-1) 1236 ms in`），6 秒时再按能唤醒；`am start` 原桌面同时 force-stop Aerial，复活后拉回 Aerial（日志有新的那一行，但这台走的是原有的 revived 分支）；在 App 里 force-stop 不会盖住 App。**Lite** 在 aerial21 模拟器（安卓 5.0，aerial18 是 ARM 镜像跑不了，改不了系统时间所以用 `service call alarm 3` 切时区）：桌面时钟 2 秒内变、控制中心开着时时间和日期跟着变、跨整分钟会走。**小米 MFTR0 这轮没测**（5555 拒绝连接，在待机）。**TCL 上装着没提交的测试包 versionCode 147，下次发版 ≥ 148。**
+  - **没真机验证**：#1580（没有 MStar）、#1599（没有海信，只是猜固件注入的键不带设备号）、#1584（没有当贝，TCL 上走的是原有分支）、#1588（没有安卓 4.x 真机）、PR #1587（没有极米）。
+  - 关掉：#1497 #1563（确认修好）、#1483（README 后）、#1594（自制桥接 App 冒充白名单包名，和原则冲突）、#1601（同 #1394）、#1535（固件开机清无障碍、shell 不给授权）、#1514 #1521（TCL ak30a5 按住音量：安卓 9 有按键过滤器时不合成连发，同小米 ≤11）。
+  - 转户主：#1602 低内存且取不到帧时不放航拍影片；#1600 酷开按型号内置 `filterHomeAlways`（同 #1518 #1546）。
+
 ## 现状（2026-11-16）
 
 - **未发布（1.99 之后，2026-11-16）：屏保可以关掉地点说明**：个性化 → 屏幕保护程序在「时间」下面加「地点」（开/关，默认开，偏好 `screensaver_caption`），只在航拍、照片屏保时出现；关掉后航拍屏保左下角的地名、照片屏保的图片标题都不画，时间和地点都关时照片屏保下面的压暗也不画。手机页「屏保显示时间」下面加「屏保显示地点」（`screensaverCaption`，五种语言），诊断行加 `saver_caption=`，`ConfigReceiver` 加 `--ez screensaver_clock` / `--ez screensaver_caption`（像主屏幕布局那几项一样经 ADB 改，不过家长密码）。Lite 同样加了（`LiteSettings`、`SaverView`、`Panels`、手机页），共用 strings.xml。按键不变：没有用返回键收起文字（返回键在主屏幕上是进屏保的键，屏保里改成收字幕会让人以为卡住；户主同意）。验证：standard、guard 单测各 272 个通过，Lite lint 通过。**小米 MFTR0**（standard 本地包 versionCode 146 + 31.dm，speed-profile / install-dm）开着户主的长辈模式（有家长密码，控制中心没有个性化，手机页改设置要密码），用 ConfigReceiver 切换：按返回进航拍屏保（接着壁纸放），关地点后左下角没有地名、时间还在；打开后地名马上出现；两项都关时画面上没有字。**TCL MT5879**（多屏互动推 guard 本地包，uiautomator 确认焦点在「同意」，compile speed）在个性化里看到「地点」一行和说明，按确定选「关」，手机页状态同步为关；按返回进航拍屏保只有时间，ConfigReceiver 打开后出现「飞越阿拉伯联合酋长国迪拜码头」。两台最后都改回时间开、地点开（默认），两台都装着这个没提交的本地包（versionCode 146，下次发版 ≥ 147）。**没测的**：照片屏保、系统 Dream 里的屏保、Lite 真机、手机页的开关只确认了页面里有、两台都返回新字段，没在手机浏览器里点过。

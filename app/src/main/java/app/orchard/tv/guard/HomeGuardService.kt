@@ -836,7 +836,12 @@ class HomeGuardService : AccessibilityService() {
                 // Android 9: STR standby stops Aerial and ADB; from 1.89 keep_adb ended at the
                 // first wake, issue #1537, the reporter's log).
                 val now = SystemClock.elapsedRealtime()
-                val awakeFor = minOf(now - screenOnAt, now - connectedAt)
+                // Nor while the guard has seen the screen go off and not yet come on: on Xiaomi
+                // MiTV-MFTR0 (Android 14) the process and the binding live through standby, and at
+                // the wake the firmware switches ADB off before SCREEN_ON reaches Aerial, so the
+                // screen looked on since the last wake, hours ago. keep_adb ended and ADB stayed off
+                // after every later wake until switched on by hand (the owner's TV, 2026-11-17).
+                val awakeFor = if (screenOff) 0L else minOf(now - screenOnAt, now - connectedAt)
                 if (GuardSetup.adbSwitchedOffInUse(this@HomeGuardService, awakeFor)) return
                 GuardSetup.ensureAdb(this@HomeGuardService)
             }
@@ -1088,6 +1093,16 @@ class HomeGuardService : AccessibilityService() {
         val stoppedOverStock = Build.VERSION.SDK_INT >= 24 && SystemClock.elapsedRealtime() >= BOOT_WINDOW_MS &&
             SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime() < 60_000 &&
             GuardSetup.stockHomeSinceHomeLeft(this) && GuardSetup.stockHomeSeenWithin(this, STOPPED_OVER_STOCK_MS)
+        // Stopped by the firmware in the same moment the stock launcher came up, before the guard
+        // could see it: Dangbei Z1 Pro (DBZ1 Pro, w400, Android 9) force-stops every third-party
+        // app on the Home press's CLOSE_SYSTEM_DIALOGS, and when the notification listener brought
+        // the process back 10 s later nothing above held (no window had been seen), so Home stayed
+        // on Dangbei's launcher until the next window change (issue #1584, the reporter's log).
+        // Usage stats saying a stock launcher is in front are enough; the take-over looks again.
+        val stockFrontByUsage = Build.VERSION.SDK_INT >= 24 && SystemClock.elapsedRealtime() >= BOOT_WINDOW_MS &&
+            SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime() < 60_000 && !justUpdated() &&
+            frontByUsage()?.first?.let { it in stockHomes } == true
+        if (stockFrontByUsage) DiagLog.i("guard: bound in a new process with the stock launcher in front by usage stats")
         // Revived with the screen off (standby): the screen-on check takes over at wake.
         // Not gated on being the default Home: Skyworth/Coolita (8R145, Android 11) starts its own
         // launcher at boot whatever Home resolves to (issue #43). The take-over looks first, and
@@ -1095,7 +1110,7 @@ class HomeGuardService : AccessibilityService() {
         // Bound with the screen already lit and SCREEN_ON missed: this binding is the wake itself.
         val wokeUnseen = boundAwakeAt > 0 && SystemClock.elapsedRealtime() >= BOOT_WINDOW_MS && recoveryWindow()
         if (!fastBootTakeOver && !appLeftInFront &&
-            (SystemClock.elapsedRealtime() < BOOT_WINDOW_MS || revived || diedInFront || stoppedOverStock || wokeUnseen) &&
+            (SystemClock.elapsedRealtime() < BOOT_WINDOW_MS || revived || diedInFront || stoppedOverStock || wokeUnseen || stockFrontByUsage) &&
             getSystemService<PowerManager>()?.isInteractive == true
         ) {
             takeOverOnceSettled(
@@ -1104,11 +1119,12 @@ class HomeGuardService : AccessibilityService() {
                     diedInFront -> "back after Aerial died in front"
                     stoppedOverStock -> "back after Aerial was stopped over the stock launcher"
                     wokeUnseen -> "bound after the screen lit"
+                    stockFrontByUsage -> "bound with the stock launcher in front"
                     else -> "bound shortly after boot"
                 },
                 // Back from standby or a boot, not from a crash: the moment to open the input
                 // the owner wants the TV to start on.
-                woke = (!diedInFront && !stoppedOverStock) || revived,
+                woke = (!diedInFront && !stoppedOverStock && !stockFrontByUsage) || revived,
             )
             if (SystemClock.elapsedRealtime() < BOOT_WINDOW_MS) scheduleBootRechecks()
         }
@@ -1932,7 +1948,13 @@ class HomeGuardService : AccessibilityService() {
         // Gated on a Home press just before it: this activity also serves apps' "open with".
         // After the unlock check, like the rest of this method: nothing here may act in the seconds
         // before the user is unlocked (that window is the boot recovery's, see #1449).
-        if (isHomeChooser(pkg, cls)) {
+        // Skipped altogether when the wide query already answers Aerial: a record with MAIN + HOME
+        // and no CATEGORY_DEFAULT (the split state of #1569, and what a reboot leaves of a dual set)
+        // answers the wide query and leaves the DEFAULT one to the system's chooser. Neither branch
+        // below helps there: closing the chooser only makes it come back on the next press, and the
+        // Home after it is answered by the system, which is the same chooser again. Those machines
+        // had this chooser before #1523 and are left with it, nothing added.
+        if (isHomeChooser(pkg, cls) && wideResolvedHome() != packageName) {
             // Answered once per Home press: Aerial restarts itself on that press, which also refreshes
             // broughtBackAt, so a cooldown on it would skip the Back on every ordinary press.
             if (before == packageName &&
@@ -2145,6 +2167,17 @@ class HomeGuardService : AccessibilityService() {
         cls.endsWith(".FallbackHome") && (pkg to cls) in fallbackHomes && GuardSetup.isUserUnlocked(this)
 
     private fun isDefaultHome(): Boolean = resolvedHome() == packageName
+
+    /**
+     * What the wide query alone (MAIN + HOME, no DEFAULT) hands Home to. No flag here: a preferred
+     * record written without CATEGORY_DEFAULT answers this one while the DEFAULT query falls to the
+     * chooser, which is the state the start of onAccessibilityEvent's chooser block checks for.
+     */
+    private fun wideResolvedHome(): String? =
+        packageManager.resolveActivity(
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),
+            0,
+        )?.activityInfo?.packageName
 
     private fun resolvedHome(): String? =
         packageManager.resolveActivity(
