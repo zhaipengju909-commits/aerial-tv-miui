@@ -145,6 +145,10 @@ class HomeActivity : Activity(), HomeView.Host {
         refreshDaily()
         Weather.refreshIfStale({ work.execute(it) }) { handler.post { showWeather() } }
         resetIdle()
+        // TCL MStar: off the main thread, ask the adapter whether Home may restore STORAGE.
+        // It only does so after Lite itself switched the input (or on the STORAGE-backed
+        // firmware); CEC at boot and the viewer's own remote input key are left alone.
+        work.execute { TclMs901Sources.backToStorage(this) }
         if (SystemIntents.settingsBounced(this)) handler.postDelayed({
             if (resumed && hasWindowFocus()) SystemIntents.showXiaomiSettingsPopup(this)
         }, 400)
@@ -172,6 +176,9 @@ class HomeActivity : Activity(), HomeView.Host {
         // tried on a Lite TV). Lite's own starts of this activity carry ACTION_MAIN.
         val homeByComponent = intent.action == null && intent.component?.packageName == packageName
         if (intent.hasCategory(Intent.CATEGORY_HOME) || homeByComponent) {
+            // An explicit Home wins over the brief "just switched" hold. The switch record is
+            // kept, so onResume may put the Android picture back after a Lite-initiated pick.
+            TclMs901Sources.homeRequested()
             hideSaver()
             closeAll()
             home.reset()
@@ -843,6 +850,9 @@ class HomeActivity : Activity(), HomeView.Host {
     }
 
     private fun open(intent: Intent) {
+        // A TCL MStar input is switched through the firmware's TV manager, not started as an
+        // Activity. Only Intents that carry the adapter's own enum-name extra are intercepted.
+        if (TclMs901Sources.switch(this, intent)) { closeAll(); return }
         try {
             startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         } catch (t: Throwable) {

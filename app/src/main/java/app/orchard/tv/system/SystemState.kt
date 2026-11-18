@@ -221,7 +221,22 @@ object SystemProbe {
         pkg in SETTINGS_PACKAGES ||
             context.packageManager.resolveActivity(Intent(Settings.ACTION_SETTINGS), 0)?.activityInfo?.packageName == pkg
 
-    private val SETTINGS_PACKAGES = setOf("com.android.settings", "com.android.tv.settings", "com.xiaomi.mitv.settings", "com.tcl.settings", "com.helios.setting", "com.haier.tv.menusetting", ChanghongSettings.PACKAGE)
+    private val SETTINGS_PACKAGES = setOf("com.android.settings", "com.android.tv.settings", "com.xiaomi.mitv.settings", "com.tcl.settings", "com.helios.setting", "com.haier.tv.menusetting", SKYWORTH_DIGITAL_SETTINGS, BAOFENG_SETTINGS, ChanghongSettings.PACKAGE)
+
+    /**
+     * Skyworth Digital's settings, the settings app of the boxes it builds: Tencent Aurora Box 7
+     * (BA102, Amlogic, Android 14) answers ACTION_SETTINGS with AOSP's TV Settings, which lack the
+     * box's wired-network page (issues #1597 #1614, both reporters named the package; the main and
+     * Ethernet activities from the second's adb).
+     */
+    private const val SKYWORTH_DIGITAL_SETTINGS = "com.skyworthdigital.settings"
+
+    /**
+     * Baofeng TV's settings (AML_T962, Android 9): nothing on the firmware answers ACTION_SETTINGS,
+     * and its network page is a fragment inside this activity (issue #1339, opened with am start
+     * by the reporter).
+     */
+    private const val BAOFENG_SETTINGS = "com.baofengtv.settings"
 
     fun settingsTileIntent(context: Context, pkg: String): Intent? =
         if (pkg in setOf("com.android.settings", "com.android.tv.settings", ChanghongSettings.PACKAGE)) {
@@ -302,6 +317,10 @@ object SystemProbe {
             // AOSP's empty MainSettings; LeTV's own settings have no launcher entry and answer no
             // settings action (the reporter opened them by component, issue #1528).
             Intent(Intent.ACTION_MAIN).setComponent(ComponentName("com.stv.globalsetting", "com.stv.globalsetting.activity.SettingActivity")),
+            // Tencent Aurora Box 7 (issues #1597 #1614): see SKYWORTH_DIGITAL_SETTINGS.
+            Intent(Intent.ACTION_MAIN).setComponent(ComponentName(SKYWORTH_DIGITAL_SETTINGS, "$SKYWORTH_DIGITAL_SETTINGS.activity.MainActivity")),
+            // Baofeng AML_T962 (issue #1339): see BAOFENG_SETTINGS.
+            Intent(Intent.ACTION_MAIN).setComponent(ComponentName(BAOFENG_SETTINGS, "$BAOFENG_SETTINGS.MainActivity")),
             Intent(Settings.ACTION_SETTINGS),
             // Konka Android TV 553 (Hi3751V553, Android 5.1.1) has neither of the above: its settings
             // are a second app, opened by component on the TV by the reporter (issue #918).
@@ -372,7 +391,12 @@ object SystemProbe {
             networkSettingsActivityIntents(context, ethernet)
 
     private fun networkSettingsActivityIntents(context: Context, ethernet: Boolean = false): List<Intent> {
-        val wired = listOfNotNull(Intent("com.xiaomi.mitv.settings.ETHERNET_SETTINGS").setPackage("com.xiaomi.mitv.settings").takeIf { ethernet })
+        val wired = listOfNotNull(
+            Intent("com.xiaomi.mitv.settings.ETHERNET_SETTINGS").setPackage("com.xiaomi.mitv.settings").takeIf { ethernet },
+            // Tencent Aurora Box 7 (issue #1614): its wired page, with DHCP or static, gateway and
+            // DNS, is only in Skyworth Digital's settings; AOSP's network page has none of it.
+            Intent(Intent.ACTION_MAIN).setComponent(ComponentName(SKYWORTH_DIGITAL_SETTINGS, "$SKYWORTH_DIGITAL_SETTINGS.activity.EthernetSettingActivity")).takeIf { ethernet },
+        )
         return allResolvable(
             context,
             // LeTV X3-50 (EUI, Android 5.0.1): its own network page, action
@@ -388,6 +412,8 @@ object SystemProbe {
             Intent(Intent.ACTION_VIEW, Uri.parse("Settings://com.xgimi.settings.net/wifi_misckey")),
             // Huawei V65 (issue #1394): see settingsActivityIntent.
             Intent(Intent.ACTION_VIEW, Uri.parse("tvsetting://com.huawei.homevision.settings/network")),
+            // Baofeng AML_T962 (issue #1339): the network page is inside its settings.
+            Intent(Intent.ACTION_MAIN).setComponent(ComponentName(BAOFENG_SETTINGS, "$BAOFENG_SETTINGS.MainActivity")),
             Intent(Settings.ACTION_SETTINGS),
             // TCL tcl_m7642 (Android 9) answers neither Wi-Fi nor settings actions (issue #15).
             Intent(Intent.ACTION_MAIN).setComponent(ComponentName("com.tcl.settings", "com.tcl.settings.ui.MainActivity")),
@@ -778,6 +804,13 @@ object SystemProbe {
         if (runCatching { pm.queryBroadcastReceivers(baofeng, 0) }.getOrNull().orEmpty().any { it.activityInfo.exported } &&
             runCatching { context.sendBroadcast(baofeng) }.isSuccess
         ) return true
+        // Baofeng AML_T962 (Android 9) has no BFTVSourceSwitch; its source bar (HDMI 1-3, ATV,
+        // DTMB, AV) is FUI's FRowActivity, which declares no intent filter and opens by component
+        // (issue #1339, the reporter's am start). Only an exported one.
+        val bftvRow = ComponentName("com.bftv.fui.biu", "com.bftv.fui.biu.views.activity.FRowActivity")
+        if (runCatching { pm.getActivityInfo(bftvRow, 0) }.getOrNull()?.exported == true &&
+            runCatching { context.startActivity(Intent(Intent.ACTION_MAIN).setComponent(bftvRow).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
+        ) return true
         // Older Coocaa with none of the above (Skyworth 8S61, MStar, Android 4.4.2, Aerial Lite's
         // issue #1272): the system answers the remote's input key by starting its launcher's
         // HomeService with the key, which shows the input page. The extra is read from the
@@ -849,6 +882,15 @@ object SystemProbe {
         }
         return intent.takeIf { runCatching { pm.resolveService(it, 0) }.getOrNull() != null }
     }
+
+    /**
+     * TCL's source manager on older Amlogic boards (TCL 55L2, "AOSP on p34a5", Android 5.1.1): the
+     * firmware shows its 信源选择 window on the remote's input key with Aerial in front, and lets
+     * the key through as well, so Aerial's Inputs page came up under it (issue #1612, the reporter's
+     * dumpsys window: the focused window was com.tcl.sourcemananger, sic). Known by the package.
+     */
+    fun tclSourceManagerPanel(context: Context): Boolean =
+        runCatching { context.packageManager.getPackageInfo("com.tcl.sourcemananger", 0) }.isSuccess
 
     /**
      * Coocaa's Quick Panel (Skyworth 75A7D, 8R134_A7D, Android 11): the firmware opens its own

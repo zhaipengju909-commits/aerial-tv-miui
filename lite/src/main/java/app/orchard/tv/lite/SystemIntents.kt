@@ -32,6 +32,9 @@ object SystemIntents {
         Intent(Settings.ACTION_SETTINGS).setComponent(ComponentName("com.android.tv.settings", "com.hisense.systemsettings.MainActivity")),
         // LeTV Max4-55 (Android 6): its own settings before AOSP's empty page, as in the full app (#1528).
         Intent(Intent.ACTION_MAIN).setComponent(ComponentName("com.stv.globalsetting", "com.stv.globalsetting.activity.SettingActivity")),
+        // Baofeng TV's own settings, which answer no settings action (AML_T962, Android 9, the full
+        // app's issue #1339); not verified on Baofeng's Android 4.x.
+        Intent(Intent.ACTION_MAIN).setComponent(ComponentName("com.baofengtv.settings", "com.baofengtv.settings.MainActivity")),
         Intent(Settings.ACTION_SETTINGS),
         Intent(Intent.ACTION_MAIN).setComponent(ComponentName("com.konka.systemsetting", "com.konka.systemsetting.MainActivity")),
         Intent(Intent.ACTION_MAIN).setComponent(ComponentName("com.tcl.settings", "com.tcl.settings.ui.MainActivity")),
@@ -57,6 +60,8 @@ object SystemIntents {
         Intent(Intent.ACTION_MAIN).setComponent(ComponentName("com.android.tv.settings", "com.android.tv.settings.connectivity.NetworkActivity")),
         Intent(Settings.ACTION_WIFI_SETTINGS),
         Intent("com.pptv.intent.action.WIFI_ACTIVITY").setComponent(ComponentName("com.pptv.setting", "com.pptv.setting.wifi.WifiWorkActivity")),
+        // Baofeng: the network page is inside its settings (full app, #1339).
+        Intent(Intent.ACTION_MAIN).setComponent(ComponentName("com.baofengtv.settings", "com.baofengtv.settings.MainActivity")),
         Intent(Settings.ACTION_SETTINGS),
         Intent(Intent.ACTION_MAIN).setComponent(ComponentName("com.tcl.settings", "com.tcl.settings.ui.MainActivity")),
         Intent("android.intent.action.WIFISETTING").setPackage("com.tcl.settings"),
@@ -84,6 +89,11 @@ object SystemIntents {
      */
     fun xiaomiInputs(context: Context): List<Pair<String, Intent>> {
         if (Build.VERSION.SDK_INT >= 21) return emptyList()
+        // TCL MStar 4.x with the TV manager: list the ports the firmware says this board has,
+        // not the fixed Xiaomi HDMI 1-3 set. Only where getSourceList() can be read; the
+        // Intents carry an enum name, which HomeActivity.open switches through the firmware
+        // instead of starting as an Activity. Every other 4.x TV falls through unchanged.
+        TclMs901Sources.inputs(context).takeIf { it.isNotEmpty() }?.let { return it }
         val player = ComponentName("com.xiaomi.mitv.tvplayer", "com.xiaomi.mitv.tvplayer.ExternalSourceActivity")
         if (runCatching { context.packageManager.getActivityInfo(player, 0) }.isFailure) return emptyList()
         val traits = runCatching {
@@ -161,6 +171,12 @@ object SystemIntents {
             .setComponent(ComponentName("com.baofengtv.sourceswitch", "com.baofengtv.sourceswitch.receiver.TVEventReceiver"))
         if (runCatching { pm.queryBroadcastReceivers(baofeng, 0) }.getOrNull().orEmpty().any { it.activityInfo.exported } &&
             runCatching { context.sendBroadcast(baofeng) }.isSuccess
+        ) return true
+        // Baofeng boards without BFTVSourceSwitch: FUI's source bar, opened by component (AML_T962,
+        // Android 9, the full app's issue #1339); not verified on Baofeng's Android 4.x.
+        val bftvRow = ComponentName("com.bftv.fui.biu", "com.bftv.fui.biu.views.activity.FRowActivity")
+        if (runCatching { pm.getActivityInfo(bftvRow, 0) }.getOrNull()?.exported == true &&
+            runCatching { context.startActivity(Intent(Intent.ACTION_MAIN).setComponent(bftvRow).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
         ) return true
         // Older Coocaa (Skyworth 8S61, MStar, Android 4.4.2) has none of the above: on the remote's
         // input key the system starts its launcher's HomeService with the key, which shows the
