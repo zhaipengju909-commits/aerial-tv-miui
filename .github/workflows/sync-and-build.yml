@@ -89,9 +89,13 @@ jobs:
         run: git push origin main
 
       - name: Decode keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
           mkdir -p local
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > local/aerial-release.jks
+          # The secret may carry CR/LF from PowerShell; strip whitespace before decoding.
+          printf '%s' "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 -d > local/aerial-release.jks
+          test -s local/aerial-release.jks
 
       - name: Create signing.properties
         run: |
