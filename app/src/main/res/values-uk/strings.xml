@@ -319,4 +319,12 @@
     <string name="kids_blocked">«%s» тут недоступний</string>
     <string name="kids_warn">Лишилося %d хв</string>
     <string name="kids_warn_break">Перерва за %d хв</string>
+    <string name="a11y_delete">Видалити</string>
+    <string name="cc_about">Про Aerial</string>
+    <string name="cc_about_update">Оновлення</string>
+    <string name="cc_about_latest">Остання версія</string>
+    <string name="cc_about_version">Версія %1$s</string>
+    <string name="ss_sleep">Сон</string>
+    <string name="ss_sleep_hint">Без заставки: коли мине час, телевізор переходить у режим очікування, як від кнопки живлення. Багато телевізорів потім вмикаються лише кнопкою живлення.</string>
+    <string name="cc_update_to">Оновити до %1$s</string>
 </resources>

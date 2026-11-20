@@ -2,10 +2,34 @@
 
 写给接手 Aerial 的人或 AI。先读这份，再读 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [devices/](devices/)。
 
-## 现状（2026-11-19）
+## 现状（2026-11-20）
+
+- **2026-11-20 下午全量巡检**（记录 `local/triage/2026-11-20-full.md`，回复 `replies-2026-11-20.py` / `replies-2026-11-20b.py`，发出 `posted-2026-11-20.txt`）：345 issue / 70 PR，新的或有新回复的 45 个逐个读过；关闭 21 个（含 13 个十天无回音）。main 上未发版的改动（每个一个提交，已推送）：
+  - **#1668 峰米 FengOS 投影亮度**（1c4b7a9）：有 `cn.formovie.fengos.settings` 面板时不显示亮度行、不读写 `screen_brightness`（`SystemProbe.hidesBrightness`，进程内缓存），Lite 同步（`Brightness.hidden`）。报告人 Q3 Pro 实测 FengOS 只认 102，别的值让光机待机唤醒后不亮、卸载也不恢复。我们没真机。#1661 小明 Q1 Pro（olaf，没有那个面板，`screen_brightness=255`，开机黑屏）请报告人写回 102 并断电确认，确认后再按机型加。
+  - **#1630 每日壁纸过零点不换**（f39a5a2）：必应 `startdate` 是 UTC 日期（中国 20 日零点上线那张标 19 日，`fullstartdate` 202611191600），以前拿中国日期比，「今天的图」永远不在。索引存 `start`，上一张上线 24 小时后才该换（`DailyDates.kt`，单测 `DailyDatesTest`），Lite 同步。没等零点实测。
+  - **#1383 / #1391**（affd296）：`dumpsys activity service app.orchard.tv/.guard.HomeGuardService` 打印守护状态和 DiagLog（极米不绑定通知监听，RevivalListener 是 `No services match`）。小米 MFTR0 实测有输出。
+  - **#1646 照片屏保时钟字距**（cba1725）：屏保自己的时钟改成按首页字号排版再放大，和首页带过去的时钟一致。按代码推断，没在照片屏保上实测（两台都是航拍壁纸，没改户主设置）。
+  - **#1651**（e468dce）上传照片按长边算采样；**#1378**（cbfe660）暴风 AML_T962 的直播和信号源栏进「全部 App」，都 Lite 同步，都没真机。README 加大眼橙 C2 Ultra（#1642）；adb-by-brand 加酷开 85A10H、海信笔记加 dream 拆装闪首页（#1599）。
+- 验证：三个包编译、standard 单测 276 个、Lite lint 通过，签名 e089…。测试包 versionCode 仍是 153（没改）：**小米 MFTR0** install-multiple + 31.dm（speed-profile / install-dm），selftest 守护、主页键从设置 0.3 s、8 个信号源，亮度行照常（`Aerial can set it: true`），返回进航拍屏保、按键回首页，录屏没有黑帧（只录到约每秒一帧）。**TCL MT5879** 多屏互动推 guard（uiautomator 确认焦点在「同意」，compile speed），selftest 守护、主页键从浏览器 0.4 s、7 个信号源，屏保预览进出正常，两个 walleve 服务和 AerialDream 不变。下次发版 versionCode ≥ 154，Lite ≥ 38（Lite 改了）。
+- **新的 2.12 回归 #1671**：魔百盒报告「有电池、没插电、42%」，状态按钮显示了电量。已要诊断（`Output` 行）和 `dumpsys battery`，发版前最好修：可能要在 `present` 之外再看电压 / 技术 / 是否播放设备。
+- PR #1660（极米唤醒后关选择框 + 主页键焦点）：请作者拆开，焦点部分会让守护看不到主页键的机型丢掉「首页按主页键回第一行」。交户主：#1576 城市提示 / 旧读数、PR #1556 第 6 个提交、PR #1643 屏保亮度（功能轮次）。
+- 顺带发现：`docs/devices/adb-by-brand.md`「打不开 ADB 的机型」末尾链接了一个第三方开 ADB 工具，和「不推荐其他 App / 工具」的原则冲突，没动，等户主决定是否删掉。
+
+- **2.12（versionCode 153），Lite 1.35（37），2026-11-20 发布**（[v2.12](https://github.com/pengchujin/aerial-tv/releases/tag/v2.12)）：下面「2.11 之后」的全部改动（诊断 Output 行、#1476 #1606 #1436 #1615 #1486 #1426）。三个包签名 e089…6685，standard、guard 单测和 Lite lint 通过。官网已部署：version.txt=v2.12，notes.json 第一条是 2.12，三个 APK 字节数和 Release 一致（standard 3228923、guard 3228862、lite 1009782），`/diag/aerial-710.apk` 还在。#1606 #1436 #1615 #1486 #1426 #1476 贴了发布链接（`local/triage/release-2.12-posts.py`，记录 `posted-2026-11-20.txt`），都留着开着，等报告人确认；#1426 请报告人在 GOOVIS 上确认电量，#1476 请报告人试 TalkBack。
+  - 两台回归：小米 MFTR0（install-multiple + 31.dm，speed-profile / install-dm，长辈模式仍开着、没动）selftest 守护、主页键从设置 0.4 s、8 个信号源；TCL（`tcast-push.py`，uiautomator 确认焦点在「同意」后确定，compile speed）selftest 守护、主页键从浏览器 0.3 s、7 个信号源，两个 walleve 服务和 AerialDream 屏保不变。「待机」「关闭电视」两台都没真的触发过（户主不在电视旁）。adb 一度对两台都报 `No route to host`（端口其实是通的），`adb kill-server` 后恢复。下次发版 versionCode ≥ 154，Lite ≥ 38。
 
 - **2.11（versionCode 152），Lite 1.34（36），2026-11-19 发布**（[v2.11](https://github.com/pengchujin/aerial-tv/releases/tag/v2.11)）：下面这轮巡检的全部改动。版本名从这版起每次加 0.01（见「发版」第 1 步）；versionCode 跳过 151（两台装过 151 测试包）。三个包签名 e089…6685，官网已部署，字节数和 Release 一致（standard 3212338、guard 3212169、lite 1005466），version.txt=v2.11。修过的 #1391 #1626 #1625 #1576 #1383、PR #1624 贴了发布链接（`release-2.11-posts.py`）。
   - 两台回归：小米 MFTR0（install-multiple + 31.dm，speed-profile / install-dm）selftest 主页键从设置 0.5 s 回、8 个信号源；TCL（install.sh 多屏互动，截图确认焦点在「同意」后确定，compile speed，两个 walleve 服务和 AerialDream 屏保不变）selftest 7 个信号源，主页键装完后第一次 5.2 s（同 1.96 记过的现象），之后三次 0.3–0.4 s；信号源键弹 TCL 面板、按返回回 Aerial。下次发版 versionCode ≥ 153，Lite ≥ 37。
+
+- **2.11 之后（已随 2.12 发布）**：
+  - **诊断加 `Output` 行**（完整版和 Lite 都调用 `OutputDevice.describe`）：`ro.hdmi.device_type`、`ro.build.characteristics` 各自的值和 `playback_device` 判定、`volume_fixed`、`live_tv` / `leanback` / `hdmi_cec` / `television` 四个 feature、电池广播。原来 Settings 行里的 `playback_device`、`volume_fixed` 挪到这里。目的是给「没有信号源的盒子隐藏信号源 / 亮度」的重新设计收集数据：1.89–2.11 的报告里 `playback_device=true` 的有电视（TCL 55L2 #1612、暴风 AML_T962 #1460，大概率是 `characteristics=mbx` 造成的），但以前没打出是哪个信号判的；`TvInputManager` 没有输入的大多是海信、TCL 等真电视，不能用来判断是不是盒子。小米 MFTR0 实测：`device_type=0, characteristics=tv`，四个 feature 都是 true；没有电池却报 `level=100 plugged=1 status=2`，只有 `present=false` 能说明没电池（以后做 #1426 电量要按 `present` 判断）。TCL、Lite 没上真机。
+  - **功能轮次（户主 2026-11-19 定：除完全自动更新外都做）**，测试包 versionCode 仍是 152（没提交）：小米 MFTR0 install-multiple + 31.dm（speed-profile / install-dm）；TCL 多屏互动推 guard（uiautomator 确认焦点在「同意」，compile speed，守护还在）。小米开着户主的长辈模式（临时退出后，Aerial 重启 / 屏保 / 息屏会自动恢复，这是设计），所以界面截图都在 TCL 上拍。
+    - **#1476 读屏**：`Pressable` 加 `semantics(mergeDescendants)`（角色、点击，新参数 `label`），磁贴用 App 名作 `contentDescription`（双击打开、长按菜单），状态按钮读「控制中心」，滑条读「音量」「亮度」，密码键盘删除键读「删除」。TCL 上 uiautomator 看得到 `content-desc`；两台电视都没有读屏 App，没听过 TalkBack 实际朗读。Lite 没做：控件是自绘 View、焦点自己管，要改焦点模型。
+    - **#1606 版本和更新（户主 2026-11-20 从四个方案里选了 A，模拟器截图给户主看过）**：控制中心主页平时不出现版本，只在有新版本时最下面多一行「更新到 x」（蓝点，`MenuRow` 新参数 `dot`，`Palette.Blue`），点进更新页，返回到主页。版本、渠道、桌面状态和「软件更新」（没有新版本时按一下立即检查）放在个性化最底下的「关于 Aerial」一组；`CcPage.About` 去掉了。Lite 同样（没有更新），`Sheet.keepInView` 在最后一行把内容滚到底，否则下面不可聚焦的「关于」看不到。GoogleTV 模拟器（安卓 13）上截图确认：平时、有新版本（versionName 临时改成 2.10 的测试包，读到官网 2.11）、个性化里「更新到 2.11」打开更新页；Lite 个性化最底下。两台电视没装这一版（TCL 待机、小米开着长辈模式）。
+    - **#1615 / #1436 待机**：`HomeGuardService.sleep()` 用 `GLOBAL_ACTION_LOCK_SCREEN`（安卓 9+，守护在运行，`canSleep`）。手机页「这台电视」下面单独一组加蓝色的「关闭电视」（不放红色：它只是待机、不删东西，和 iOS 设置里的「关机」一样；确认框，`/api/power/off`，儿童模式下不要家长密码）；屏保类型加「待机」（`ScreensaverMode.Sleep`，只在 `canSleep` 时出现，只在计时到时待机，返回键 / 立即开始不待机，守护不在时显示时钟）。有「待机」时选项变窄（左右 15dp、间距 8dp），「立即开始」只剩 40dp 的圆形播放按钮（六个选项加文字按钮放不下，第一版在 TCL 上把「类型」挤没了）。**两台电视都没有真的让它待机过**：户主不在电视旁，待机后没人能开机。Lite 没有守护，不做。
+    - **#1486 图标库任选**：手机页 App 菜单加「从图标库选…」，网格列出图标库全部图片（手机直接从官网 `icons/p/` 加载，索引里没有 App 名，靠图上的 logo 认），选中后电视先下载那张再保存（`IconLibrary.fetch`），记成 `borrow:<包名>` = `<来源包名>/<id>`，之后刷新照样下载、保留。Lite 同步（同一个网页）。TCL 上打开过网格（262 张），只发了一个不存在的 id 确认被拒、图标没变；**没有真的替户主换图标**。
+    - **#1426 电量**：状态按钮里加电量和电池图形（`present=true`，并且没插电或不满 100% 才显示；20% 以下不充电时红色）。TCL 上用 `dumpsys battery set present 1 / ac 0 / level 57` 临时假装有电池截图，随后 `dumpsys battery reset`，确认恢复 `present: false`、图标消失。Lite 同步。
+    - **#1392 预加载**：不改代码（航拍和我的视频本来就预加载下一段），回复草稿等户主决定是否发。
 
 - **2026-11-19 全量巡检**（记录 `local/triage/2026-11-19-full.md`，回复 `replies-2026-11-19.py`，发出 `posted-2026-11-19.txt`）：349 issue / 69 PR，有新内容的 33 个逐个读过；维护者最后、超过 10 天没回音的 26 个关掉。main 上未发版的改动（都在 2.1 之后，每个一个提交）：
   - **#1391 极米 RS Pro 2 开机黑屏**：锁定开机兜底的 `sawScreenEvent` 以前在看事件类型之前就置位，开机时 `com.android.newsettings/CellView`（View，不是 Activity）一条事件就永久挡住兜底。现在只认窗口状态变化 + 类名能解析成 Activity（`MATCH_DIRECT_BOOT_AWARE|UNAWARE`）+ 非 Dialog、非 FallbackHome（`HomeGuardService.isScreenEvent`）。`DiagLog.init` 建文件时补写内存里更早的行，守护在解锁时建文件。没真机。
