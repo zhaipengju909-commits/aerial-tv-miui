@@ -683,10 +683,12 @@ fun ShelfClock(
                 .toSaverClock(toSaver, Type.Clock.fontSize, 0.dp, drift)
                 .capBox(Type.Clock.fontSize),
         )
-        Weather.now?.takeIf { AerialSettings.showWeather }?.let { w ->
+        val atMs = now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        Weather.shown(atMs)?.takeIf { AerialSettings.showWeather }?.let { w ->
             val place = Weather.place?.takeIf { it.length <= 12 }
             val range = if (w.high != null && w.low != null) stringResource(R.string.weather_high_low, w.high, w.low) else null
-            val detail = listOfNotNull(place, stringResource(conditionName(w.kind)), range).joinToString(" · ")
+            val age = Weather.hoursOld(w, atMs)?.let { stringResource(R.string.weather_hours_ago, it) }
+            val detail = listOfNotNull(place, stringResource(conditionName(w.kind)), range, age).joinToString(" · ")
             Row(aside.padding(top = 18.dp).capBox(Type.ClockDetail.fontSize), verticalAlignment = Alignment.CenterVertically) {
                 GlyphIcon(glyphFor(w), Color.White, 18.dp, Modifier.padding(end = 7.dp))
                 BasicText(
@@ -791,10 +793,12 @@ fun CornerClock(now: LocalDateTime, modifier: Modifier = Modifier, toSaver: () -
             timeText(now), style = Type.SmallClock.copy(fontSize = Type.Title.fontSize, color = dim, shadow = shadow),
             modifier = Modifier.toSaverClock(toSaver, Type.Title.fontSize, Type.Title.fontSize.value.dp * CAP_TOP, drift),
         )
-        Weather.now?.takeIf { AerialSettings.showWeather }?.let { w ->
+        val atMs = now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        Weather.shown(atMs)?.takeIf { AerialSettings.showWeather }?.let { w ->
             GlyphIcon(glyphFor(w), dim, 18.dp, aside.padding(start = 16.dp, end = 6.dp))
             val place = Weather.place?.takeIf { it.length <= 12 }
-            BasicText(listOfNotNull(place, stringResource(R.string.weather_temperature, w.celsius)).joinToString(" "), style = Type.Headline.copy(color = dim, shadow = shadow), modifier = aside)
+            val age = Weather.hoursOld(w, atMs)?.let { " · " + stringResource(R.string.weather_hours_ago, it) }.orEmpty()
+            BasicText(listOfNotNull(place, stringResource(R.string.weather_temperature, w.celsius)).joinToString(" ") + age, style = Type.Headline.copy(color = dim, shadow = shadow), modifier = aside)
         }
     }
 }
@@ -876,13 +880,15 @@ fun StatusPill(
 }
 
 /** The battery, where the device runs on one (issue #1426: GOOVIS D4 headset). */
-data class Battery(val percent: Int, val charging: Boolean)
+data class Battery(val percent: Int)
 
 /**
  * The battery's level while Home shows, from the system's battery broadcast (sent on each change
- * of a percent or of the plug), or null: no battery, or plugged in and full. A TV with no battery
- * still answers "level 100, plugged in, charging" (Xiaomi MiTV-MFTR0), with present=false; a
- * firmware that also claimed present=true would read as plugged in at 100% and show nothing.
+ * of a percent or of the plug), or null: no battery, or plugged in. Only a device running on its
+ * battery shows it. Boxes and TVs on mains power claim one all the same: a MECOOL KM9PRO box
+ * (S905L3AB, Android 9, issue #1671) answers "present, USB, charging, 42%" for good, an e900v22c
+ * box (#1681) and a no-name TV (#1673) showed a level too, and a tablet made into a box (#1673)
+ * sits plugged in at 85%. A TV with none answers "level 100, plugged in" (Xiaomi MiTV-MFTR0) with present=false.
  */
 @Composable
 private fun rememberBattery(): Battery? {
@@ -894,7 +900,7 @@ private fun rememberBattery(): Battery? {
             val scale = i.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100).coerceAtLeast(1)
             val percent = (i.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) * 100 / scale)
             val plugged = i.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0) != 0
-            battery = if (percent < 0 || (plugged && percent >= 100)) null else Battery(percent, plugged)
+            battery = if (percent < 0 || plugged) null else Battery(percent)
         }
         val receiver = object : android.content.BroadcastReceiver() {
             override fun onReceive(c: android.content.Context, i: android.content.Intent) = read(i)
@@ -905,10 +911,10 @@ private fun rememberBattery(): Battery? {
     return battery
 }
 
-/** A battery outline filled to its level, and the percent; red at 20% and under unless charging. */
+/** A battery outline filled to its level, and the percent; red at 20% and under. */
 @Composable
 private fun BatteryBadge(battery: Battery, fg: Color) {
-    val fill = if (battery.percent <= 20 && !battery.charging) Palette.Red else fg
+    val fill = if (battery.percent <= 20) Palette.Red else fg
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         BasicText("${battery.percent}%", style = Type.Callout.copy(color = fg))
         Canvas(Modifier.size(22.dp, 11.dp)) {
