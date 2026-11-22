@@ -8,6 +8,9 @@
 | 7T641（mt9633） | Android 13 | 冷启动约 60 秒黑屏：Aerial 早已画完，但 SurfaceFlinger 里它的窗口 `crop=[0,0,0,0]`；遥控器「播放」键在这台上发的是 Home，看视频时按到会被守护拉回 Aerial，然后又是 60 秒黑屏 | #321、#326 |
 | K3 / 7T634_P3H（mt9633 / mt9952） | Android 13 | **1.87 standard（120）复测显示正常**，记录到 HOME 方式重开、`window focus true`、输入焦点 `OK`；放行 Aerial 自启动和后台保留后，实体 Home 与音量减短按正常。HDMI 接入时，仅 Aerial 的系统重启测试仍停在 HDMI，见下方 K3 小节 | [#864](https://github.com/pengchujin/aerial-tv/issues/864)、[PR #1206](https://github.com/pengchujin/aerial-tv/pull/1206) |
 | 8R721_A6FP（titanite，RTD2885P） | Android 13 | 1.67-guard 首页先显示出来，约 30 秒后两次「没有焦点窗口」ANR，回到 `com.skyworth.officehomepage`，和 8R710 / 8R734 一样 | [#839](https://github.com/pengchujin/aerial-tv/issues/839) |
+| 8H651_F1P（Hi3751V660，Huanglong，酷开 CCOS） | Android 12 | 装上后屏幕上一直是酷开首页或黑屏：Aerial 窗口在 WMS 里「已绘制、可见」，自身日志有帧但 `focus false`；`SkyRMService_intercept` 在开机时拒掉 Aerial 的开机广播、守护和通知监听（`isSystemApp: false`）；酷开首页走私有的 `coocaa.intent.action.HOME` / `android.intent.category.HOME.CC`，role 改了也没用。报告人已卸载，没有 SurfaceFlinger 数据 | [#1684](https://github.com/pengchujin/aerial-tv/issues/1684) |
+| 7T633_A3F（mt9633） | Android 13 | guard 版黑屏、standard 能开；补授权后主页键回 Aerial，重启后回酷开桌面。和 7T641 同平台 | [#1693](https://github.com/pengchujin/aerial-tv/issues/1693) |
+| 9S94_S9A（sky938，maserati） | Android 6 | 壁纸用航拍时首页黑屏，屏保也黑或卡住；换别的壁纸后航拍屏保正常。等日志 | [#1696](https://github.com/pengchujin/aerial-tv/issues/1696) |
 | 75A6E（8R710_A6E，Realtek RTD2885P） | Android 13 | standard 版是唯一的 HOME 候选，按主页键整机卡死；创维电视应用 `com.skyworth.tv` 一直占着输入焦点，Aerial 的窗口 `NOT_VISIBLE`、`focus false`，guard 版也一样。目前没有办法 | #365 |
 | 75A7D（8R134_A7D，Realtek RTD2885N） | Android 11，酷开 CCOS 9.0 | `TvInputManager` 一个信号源都没有；改为从 `com.skyworth.tv.sdk.provider` 读列表、用 `com.skyworth.tv` 的 `SkyTVMainActivity` 切换，报告人在真机上验证通过，接口见下（1.45 起用上） | #444 |
 | 酷开 8R710_P8F（同一机芯 titanite） | Android 13 | 只有诊断报告，现象待补，估计同 #365 | #358 |
@@ -212,3 +215,7 @@ Aerial 是默认桌面、守护绑定，主页键正常；但重启后一分钟�
 - 老年模式下主页键打开 `com.tianci.movieplatform/com.ccos.cooui.movieplatform.ElderMainActivity`，`persist.service.model.cls` 写的就是它（`homepage.cls` 仍是 `HomePageActivity`）。守护把它当原桌面（内置表 + `CoocaaHome.modeScreen`），没真机。
 - 报告人看到固件掉回自家桌面后把 Aerial 的守护从 `enabled_accessibility_services` 里清掉并强停 Aerial，复活没生效；等日志。
 - `set-home-activity` 报 cannot be home，固件用私有类别 `android.intent.category.HOME.CC`。
+
+## bigfish 平台的 `filterHomeAlways`（#1518）
+
+两台创维（8H57_H5 / Hi3751V551、8H26_M9 / Hi3751V553，都是酷开、安卓 5.1.1）上报告人实测：device profile `{"filterHomeAlways":true}` 后实体主页键直接回 Aerial、不闪酷开桌面，按住音量连续变化，重启后配置和效果都保留。这台固件会吞掉 ADB 注入的 `KEYCODE_HOME`（`CheckTid`），要用实体遥控器测。P7F 上有按住音量只走一格的代价，看来和机型有关。按型号内置还等户主定。
