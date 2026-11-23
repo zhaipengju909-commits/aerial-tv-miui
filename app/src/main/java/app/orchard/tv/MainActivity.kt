@@ -449,7 +449,11 @@ class MainActivity : ComponentActivity() {
             DiagLog.i("$reason: ${id ?: pkg} is not in Kids mode; not opening it")
             return
         }
-        if (!again && SystemClock.elapsedRealtime() - bootSourceOpenedAt < 15_000) return
+        if (!again && SystemClock.elapsedRealtime() - bootSourceOpenedAt < 15_000) {
+            // Said in the log: silent, it hid why the target stayed shut (issue #1725).
+            DiagLog.i("$reason: ${id ?: pkg} was opened ${(SystemClock.elapsedRealtime() - bootSourceOpenedAt) / 1000} s ago; not again")
+            return
+        }
         if (!again && !BootOpen.due(this)) {
             DiagLog.i("$reason: already opened ${id ?: pkg} since the TV came on")
             return
@@ -976,7 +980,11 @@ class MainActivity : ComponentActivity() {
         )
         ContextCompat.registerReceiver(
             this, volumeReceiver,
-            IntentFilter("android.media.VOLUME_CHANGED_ACTION"),
+            // Mute changes too: Sony BRAVIA VH21 (Android 12) mutes music at power-on and its
+            // audio output service unmutes it a while later with no volume change, and Control
+            // Center went on showing muted with sound playing (issue #1530: ADJUST_MUTE, then
+            // ADJUST_UNMUTE 19 min later, both from com.sony.dtv.audiooutput).
+            IntentFilter("android.media.VOLUME_CHANGED_ACTION").apply { addAction("android.media.STREAM_MUTE_CHANGED_ACTION") },
             ContextCompat.RECEIVER_EXPORTED,
         )
         ContextCompat.registerReceiver(
