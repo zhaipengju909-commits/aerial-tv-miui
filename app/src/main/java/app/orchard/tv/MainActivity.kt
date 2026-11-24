@@ -85,6 +85,7 @@ import app.orchard.tv.wallpaper.AerialFormats
 import app.orchard.tv.wallpaper.ScreensaverMode
 import app.orchard.tv.system.SystemScreensaver
 import app.orchard.tv.system.WhaleyBoot
+import app.orchard.tv.system.WhaleyCecSwitch
 import app.orchard.tv.system.Diagnostics
 import app.orchard.tv.system.MissingClipboard
 import app.orchard.tv.system.Sounds
@@ -344,6 +345,19 @@ class MainActivity : ComponentActivity() {
             IntentFilter(Intent.ACTION_SCREEN_ON).apply { addAction(Intent.ACTION_SCREEN_OFF) },
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
+        // Whaley: a device switched on over HDMI-CEC takes the TV while Home is in front and the
+        // owner turned it on (WhaleyCecSwitch); the setting changes in Control Center take effect at once.
+        if (WhaleyBoot.isWhaley(this)) lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                try {
+                    snapshotFlow { AerialSettings.cecSwitch }.collect { on ->
+                        if (on) WhaleyCecSwitch.start(this@MainActivity) else WhaleyCecSwitch.stop()
+                    }
+                } finally {
+                    WhaleyCecSwitch.stop()
+                }
+            }
+        }
         // Control Center shows things that change while it is open (Home Guard binds a few seconds
         // after Aerial starts): look again every few seconds, only while it is open and Aerial is on screen.
         lifecycleScope.launch {
@@ -624,7 +638,7 @@ class MainActivity : ComponentActivity() {
         } else null
         DiagLog.i(
             "display ${m.widthPixels}x${m.heightPixels} ${m.densityDpi}dpi, canvas density ${canvasDensity(m)}, uhd ${UhdCanvas.scale(this)} (${UhdCanvas.why}); $modes; " +
-                "hwui ${systemProperty("debug.hwui.renderer")}, soft_layer=${DiagLog.softLayer(this)}, saver_fade_offscreen=${DiagLog.saverFadeOffscreen(this)}",
+                "hwui ${systemProperty("debug.hwui.renderer")}, soft_layer=${DiagLog.softLayer(this)}, soft_clock=${DiagLog.softClock(this)} (gles ${DiagLog.glesMajor(this)}), saver_fade_offscreen=${DiagLog.saverFadeOffscreen(this)}",
         )
         window.decorView.viewTreeObserver.addOnDrawListener {
             draws++
