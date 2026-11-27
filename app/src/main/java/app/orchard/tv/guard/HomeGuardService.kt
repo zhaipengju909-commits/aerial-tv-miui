@@ -631,7 +631,18 @@ class HomeGuardService : AccessibilityService() {
         if (run != chooserCheckRun || left <= 0 || aerialResumed) return
         handler.postDelayed({ closeChooserAfterWake(run, left - 1) }, WAKE_CHOOSER_RECHECK_MS)
         if (SystemClock.uptimeMillis() - aerialPausedAt > WAKE_CHOOSER_MS) return
-        val front = foreground()?.first ?: return
+        // Read off the main thread, as the foreground check is: called from Aerial's onPause in
+        // the boot window, the Binder call to usage stats held MainActivity's pause on MiTV4-ANSM0
+        // (Android 6.0.1, 1 GB) after a cold boot until the input dispatch timed out (issue #1783,
+        // the reporter's ANR stack on 2.17; #1284 was the same call from the periodic check).
+        usageWorker.post {
+            val front = foreground()?.first
+            handler.post { if (front != null && isRunning) answerChooserAfterWake(run, front) }
+        }
+    }
+
+    private fun answerChooserAfterWake(run: Int, front: Pair<String, String>) {
+        if (run != chooserCheckRun || aerialResumed) return
         if (!isHomeChooser(front.first, front.second)) return
         val since = SystemClock.uptimeMillis() - aerialPausedAt
         Log.i(TAG, "the Home chooser is in front after the wake; closing it")
@@ -1107,8 +1118,11 @@ class HomeGuardService : AccessibilityService() {
         // so the guard is created after the screen lights, SCREEN_ON is already gone, and nothing
         // below counts as a wake — no boot window, no revival, nothing died in front. What the TV
         // starts on then stayed shut on every wake (issue #1229, the reporter's log).
+        // BootOpen reads credential storage: bound while locked outside the boot window (Aerial
+        // updated before the unlock, Android 9 emulator with a boot PIN), the guard crashed here
+        // three times in a row on 2026-11-27, as at #1213's sites above.
         if (!screenOff && !recoveryWindow() &&
-            (patchwallBootCover || BootOpen.dueAfterMissedWake(this))
+            (patchwallBootCover || (GuardSetup.isUserUnlocked(this) && BootOpen.dueAfterMissedWake(this)))
         ) {
             boundAwakeAt = SystemClock.elapsedRealtime()
         }
@@ -2891,9 +2905,14 @@ class HomeGuardService : AccessibilityService() {
             // Its elder mode's home, ElderMainActivity, is the one com.tianci.system starts on the
             // Home key once that mode is on (Skyworth 8R40_G20, RTD2852, Android 8, issue #1626;
             // persist.service.model.cls names it, see CoocaaHome.modeScreen).
+            // And the AI launcher built into this package rather than com.coocaa.aigc.home, where
+            // persist.service.homepage.* does not name it: Skyworth 8R710_A6E (rtd2885p, Android
+            // 13, issue #1787, the reporter's report) showed it as the stock launcher and the guard
+            // never took it for one. Only where the package has that activity (isActivity).
             "com.tianci.movieplatform" to listOf(
                 "com.coocaa.homepage.vast.HomePageActivity",
                 "com.ccos.cooui.movieplatform.ElderMainActivity",
+                "com.coocaa.aigc.home.home.rootpage.HomeActivity",
             ),
             // China Mobile "Mobile HD Box 6" 2024 (Skyworth E900V21F, S905L3S, Android 9): the
             // firmware starts LeJia's DesktopActivity by component at power-on and on the Home

@@ -20,6 +20,7 @@ import android.net.NetworkCapabilities
 import android.net.Uri
 import android.content.res.Configuration
 import android.os.Bundle
+import android.os.PowerManager
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -424,7 +425,12 @@ class MainActivity : ComponentActivity() {
      */
     private val screenOnReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == Intent.ACTION_SCREEN_OFF) { BootOpen.noteScreenOff(context); return }
+            if (intent.action == Intent.ACTION_SCREEN_OFF) {
+                BootOpen.noteScreenOff(context)
+                if (realStarted) vm.screenOff = true
+                return
+            }
+            if (realStarted) vm.screenOff = false
             idleHandler.postDelayed({
                 if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) openBootSource("screen on")
             }, 1500)
@@ -669,6 +675,10 @@ class MainActivity : ComponentActivity() {
         super.onWindowFocusChanged(hasFocus)
         DiagLog.i("window focus $hasFocus")
         if (!hasFocus) SystemScreensaver.noteHomeHidden()
+        // Not before the real start: the view model reads settings from credential storage, and a
+        // locked start losing the focus to the firmware's boot screen crashed the process once a
+        // boot (Vidda X75 Ultra, MT9653, Android 11, issue #1788, the reporter's stack).
+        if (!realStarted) return
         // A window of the TV's over Aerial's screensaver, still resumed beneath it: a key of the
         // firmware's own was pressed. Coocaa C10's hotkey popup sometimes took focus before the
         // key's lift reached Aerial, and the screensaver went on under it (issue #915, the
@@ -1044,6 +1054,8 @@ class MainActivity : ComponentActivity() {
     /** What onResume does once the user is unlocked; also run by a start that was locked before. */
     private fun resumeWork() {
         vm.resumed = true
+        // Where a screen-on broadcast was missed: the screen's own state.
+        vm.screenOff = getSystemService<PowerManager>()?.isInteractive == false
         CecSwitch.register(this)
         if (!minuteReceiverOn) {
             // TIME_TICK is a protected system broadcast; it is only delivered to registered receivers.
